@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Tuning Profiles - WA Campaign{% endblock %}
+{% block nav_tuning %}active{% endblock %}
+{% block page_title %}Tuning Profiles{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-primary btn-sm" onclick="openModal('newProfileModal')"><i class="fas fa-plus"></i> New Profile</button>
+{% endblock %}
+
+{% block content %}
+<p class="text-sm text-muted mb-4">Configure agent typing behavior, delays, and anti-block intelligence. Profiles are applied to campaigns and control how each Android agent types messages.</p>
+
+<div class="device-grid" id="profilesGrid">
+    <div class="loading-overlay"><div class="spinner"></div></div>
+</div>
+
+<!-- New/Edit Profile Modal -->
+<div class="modal-overlay" id="newProfileModal">
+    <div class="modal" style="max-width:650px">
+        <div class="modal-header">
+            <h3 id="profileModalTitle">Create Tuning Profile</h3>
+            <button class="modal-close" onclick="closeModal('newProfileModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="profileEditId">
+            <div class="form-group">
+                <label>Profile Name *</label>
+                <input type="text" class="form-control" id="profName" placeholder="Aggressive Speed">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" class="form-control" id="profDesc" placeholder="Fast typing for urgent campaigns">
+            </div>
+
+            <h4 style="margin:20px 0 12px;font-size:14px;color:var(--accent-primary)"><i class="fas fa-keyboard"></i> Typing Speed</h4>
+            <div class="form-group">
+                <label>Min ms per character: <span class="range-value" id="valTypingMin">30</span></label>
+                <input type="range" class="form-control" id="profTypingMin" min="10" max="500" value="30" oninput="document.getElementById('valTypingMin').textContent=this.value">
+            </div>
+            <div class="form-group">
+                <label>Max ms per character: <span class="range-value" id="valTypingMax">80</span></label>
+                <input type="range" class="form-control" id="profTypingMax" min="20" max="1000" value="80" oninput="document.getElementById('valTypingMax').textContent=this.value">
+            </div>
+
+            <h4 style="margin:20px 0 12px;font-size:14px;color:var(--accent-green)"><i class="fas fa-clock"></i> Delays</h4>
+            <div class="form-group">
+                <label>Message delay min (ms): <span class="range-value" id="valMsgMin">2000</span></label>
+                <input type="range" class="form-control" id="profMsgDelayMin" min="500" max="30000" step="500" value="2000" oninput="document.getElementById('valMsgMin').textContent=this.value">
+            </div>
+            <div class="form-group">
+                <label>Message delay max (ms): <span class="range-value" id="valMsgMax">5000</span></label>
+                <input type="range" class="form-control" id="profMsgDelayMax" min="1000" max="60000" step="500" value="5000" oninput="document.getElementById('valMsgMax').textContent=this.value">
+            </div>
+            <div class="form-group">
+                <label>Between recipients min (ms): <span class="range-value" id="valRecMin">5000</span></label>
+                <input type="range" class="form-control" id="profRecMin" min="1000" max="120000" step="1000" value="5000" oninput="document.getElementById('valRecMin').textContent=this.value">
+            </div>
+            <div class="form-group">
+                <label>Between recipients max (ms): <span class="range-value" id="valRecMax">15000</span></label>
+                <input type="range" class="form-control" id="profRecMax" min="2000" max="300000" step="1000" value="15000" oninput="document.getElementById('valRecMax').textContent=this.value">
+            </div>
+
+            <h4 style="margin:20px 0 12px;font-size:14px;color:var(--accent-yellow)"><i class="fas fa-shield-alt"></i> Anti-Block Intelligence</h4>
+            <div class="form-group flex items-center justify-between">
+                <label style="margin:0">Enable Typing Mistakes</label>
+                <label class="toggle"><input type="checkbox" id="profMistakes" checked><span class="toggle-slider"></span></label>
+            </div>
+            <div class="form-group">
+                <label>Mistake rate: <span class="range-value" id="valMistakeRate">0.02</span></label>
+                <input type="range" class="form-control" id="profMistakeRate" min="0" max="0.2" step="0.005" value="0.02" oninput="document.getElementById('valMistakeRate').textContent=parseFloat(this.value).toFixed(3)">
+            </div>
+            <div class="form-group flex items-center justify-between">
+                <label style="margin:0">Enable Random Pauses</label>
+                <label class="toggle"><input type="checkbox" id="profPauses" checked><span class="toggle-slider"></span></label>
+            </div>
+            <div class="form-group">
+                <label>Pause chance: <span class="range-value" id="valPauseChance">0.10</span></label>
+                <input type="range" class="form-control" id="profPauseChance" min="0" max="0.5" step="0.01" value="0.10" oninput="document.getElementById('valPauseChance').textContent=parseFloat(this.value).toFixed(2)">
+            </div>
+            <div class="form-group">
+                <label>Max retries: <span class="range-value" id="valRetries">3</span></label>
+                <input type="range" class="form-control" id="profRetries" min="1" max="10" value="3" oninput="document.getElementById('valRetries').textContent=this.value">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('newProfileModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadProfiles() {
+    try {
+        const profiles = await api.get('/api/tuning');
+        const grid = document.getElementById('profilesGrid');
+        if (profiles.length === 0) {
+            grid.innerHTML = '<div class="empty-state"><i class="fas fa-sliders-h"></i><p>No tuning profiles.</p></div>';
+            return;
+        }
+        grid.innerHTML = profiles.map(p => `
+            <div class="device-card">
+                <div class="device-card-header">
+                    <span class="device-card-name">${p.name}</span>
+                    ${p.isDefault ? '<span class="badge badge-running">Default</span>' : ''}
+                </div>
+                <div class="text-sm text-muted mb-4">${p.description || 'No description'}</div>
+                <div class="device-card-stats">
+                    <div class="device-stat"><i class="fas fa-keyboard"></i>${p.typingSpeedMin}-${p.typingSpeedMax}ms</div>
+                    <div class="device-stat"><i class="fas fa-clock"></i>${p.messageDelayMin/1000}-${p.messageDelayMax/1000}s delay</div>
+                    <div class="device-stat"><i class="fas fa-user-clock"></i>${p.betweenRecipientsMin/1000}-${p.betweenRecipientsMax/1000}s gap</div>
+                    <div class="device-stat"><i class="fas fa-eraser"></i>Typos: ${p.typingMistakesEnabled ? 'On' : 'Off'}</div>
+                    <div class="device-stat"><i class="fas fa-pause-circle"></i>Pauses: ${p.randomPausesEnabled ? 'On' : 'Off'}</div>
+                    <div class="device-stat"><i class="fas fa-redo"></i>Retries: ${p.maxRetries}</div>
+                </div>
+                <div class="flex gap-2 mt-2">
+                    <button class="btn btn-ghost btn-sm" onclick="editProfile('${p._id}')"><i class="fas fa-edit"></i> Edit</button>
+                    ${!p.isDefault ? `<button class="btn btn-danger btn-sm" onclick="deleteProfile('${p._id}')"><i class="fas fa-trash"></i></button>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        showToast('Failed to load profiles: ' + err.message, 'error');
+    }
+}
+
+function resetForm() {
+    document.getElementById('profileEditId').value = '';
+    document.getElementById('profName').value = '';
+    document.getElementById('profDesc').value = '';
+    document.getElementById('profTypingMin').value = 30; document.getElementById('valTypingMin').textContent = 30;
+    document.getElementById('profTypingMax').value = 80; document.getElementById('valTypingMax').textContent = 80;
+    document.getElementById('profMsgDelayMin').value = 2000; document.getElementById('valMsgMin').textContent = 2000;
+    document.getElementById('profMsgDelayMax').value = 5000; document.getElementById('valMsgMax').textContent = 5000;
+    document.getElementById('profRecMin').value = 5000; document.getElementById('valRecMin').textContent = 5000;
+    document.getElementById('profRecMax').value = 15000; document.getElementById('valRecMax').textContent = 15000;
+    document.getElementById('profMistakes').checked = true;
+    document.getElementById('profMistakeRate').value = 0.02; document.getElementById('valMistakeRate').textContent = '0.020';
+    document.getElementById('profPauses').checked = true;
+    document.getElementById('profPauseChance').value = 0.10; document.getElementById('valPauseChance').textContent = '0.10';
+    document.getElementById('profRetries').value = 3; document.getElementById('valRetries').textContent = 3;
+}
+
+async function editProfile(id) {
+    try {
+        const p = await api.get(`/api/tuning/${id}`);
+        document.getElementById('profileEditId').value = id;
+        document.getElementById('profileModalTitle').textContent = 'Edit Tuning Profile';
+        document.getElementById('profName').value = p.name;
+        document.getElementById('profDesc').value = p.description || '';
+        document.getElementById('profTypingMin').value = p.typingSpeedMin; document.getElementById('valTypingMin').textContent = p.typingSpeedMin;
+        document.getElementById('profTypingMax').value = p.typingSpeedMax; document.getElementById('valTypingMax').textContent = p.typingSpeedMax;
+        document.getElementById('profMsgDelayMin').value = p.messageDelayMin; document.getElementById('valMsgMin').textContent = p.messageDelayMin;
+        document.getElementById('profMsgDelayMax').value = p.messageDelayMax; document.getElementById('valMsgMax').textContent = p.messageDelayMax;
+        document.getElementById('profRecMin').value = p.betweenRecipientsMin; document.getElementById('valRecMin').textContent = p.betweenRecipientsMin;
+        document.getElementById('profRecMax').value = p.betweenRecipientsMax; document.getElementById('valRecMax').textContent = p.betweenRecipientsMax;
+        document.getElementById('profMistakes').checked = p.typingMistakesEnabled;
+        document.getElementById('profMistakeRate').value = p.typingMistakesRate; document.getElementById('valMistakeRate').textContent = p.typingMistakesRate.toFixed(3);
+        document.getElementById('profPauses').checked = p.randomPausesEnabled;
+        document.getElementById('profPauseChance').value = p.randomPauseChance; document.getElementById('valPauseChance').textContent = p.randomPauseChance.toFixed(2);
+        document.getElementById('profRetries').value = p.maxRetries; document.getElementById('valRetries').textContent = p.maxRetries;
+        openModal('newProfileModal');
+    } catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function saveProfile() {
+    const id = document.getElementById('profileEditId').value;
+    const data = {
+        name: document.getElementById('profName').value.trim(),
+        description: document.getElementById('profDesc').value.trim(),
+        typingSpeedMin: parseInt(document.getElementById('profTypingMin').value),
+        typingSpeedMax: parseInt(document.getElementById('profTypingMax').value),
+        messageDelayMin: parseInt(document.getElementById('profMsgDelayMin').value),
+        messageDelayMax: parseInt(document.getElementById('profMsgDelayMax').value),
+        betweenRecipientsMin: parseInt(document.getElementById('profRecMin').value),
+        betweenRecipientsMax: parseInt(document.getElementById('profRecMax').value),
+        typingMistakesEnabled: document.getElementById('profMistakes').checked,
+        typingMistakesRate: parseFloat(document.getElementById('profMistakeRate').value),
+        randomPausesEnabled: document.getElementById('profPauses').checked,
+        randomPauseChance: parseFloat(document.getElementById('profPauseChance').value),
+        randomPauseMin: 500,
+        randomPauseMax: 2000,
+        maxRetries: parseInt(document.getElementById('profRetries').value),
+    };
+    if (!data.name) { showToast('Profile name is required', 'warning'); return; }
+    try {
+        if (id) { await api.put(`/api/tuning/${id}`, data); }
+        else { await api.post('/api/tuning', data); }
+        closeModal('newProfileModal');
+        resetForm();
+        showToast('Profile saved!', 'success');
+        loadProfiles();
+    } catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function deleteProfile(id) {
+    if (!confirmAction('Delete this tuning profile?')) return;
+    try { await api.del(`/api/tuning/${id}`); showToast('Profile deleted', 'success'); loadProfiles(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+loadProfiles();
+</script>
+{% endblock %}

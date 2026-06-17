@@ -1,0 +1,181 @@
+name: Build Protected Release (No Docker)
+
+# ═══════════════════════════════════════════════════════════════
+# Alternative workflow for servers WITHOUT Docker.
+# Builds a protected .tar.gz archive containing only compiled
+# binaries, then deploys via SSH + rsync.
+# ═══════════════════════════════════════════════════════════════
+
+on:
+  push:
+    tags: ['v*']  # Triggers on version tags like v1.0.0
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Protected Archive
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        run: |
+          pip install pyarmor cython setuptools
+          pip install -r requirements.txt
+
+      - name: Compile with Cython
+        run: |
+          python setup_cython.py build_ext --inplace
+          echo "✓ Cython compilation done"
+          find . -name "*.so" | head -20
+
+      - name: Obfuscate with PyArmor
+        run: |
+          pyarmor gen --output dist_obfuscated main.py
+          pyarmor gen --output dist_obfuscated --recursive app/ || true
+          echo "✓ PyArmor obfuscation done"
+
+      - name: Assemble protected build
+        run: |
+          mkdir -p dist_final/app/api dist_final/app/models dist_final/app/services
+          mkdir -p dist_final/app/templates dist_final/app/static dist_final/uploads
+
+          # Copy non-sensitive files
+          cp -r app/templates/* dist_final/app/templates/
+          cp -r app/static/* dist_final/app/static/
+          cp requirements.txt dist_final/
+          cp .env.example dist_final/
+
+          # Copy compiled .so binaries
+          find . -name "*.cpython-*.so" -not -path "./dist_*" | while read f; do
+            dir=$(dirname "$f")
+            mkdir -p "dist_final/$dir"
+            cp "$f" "dist_final/$dir/"
+          done
+
+          # Copy obfuscated main.py
+          cp dist_obfuscated/main.py dist_final/main.py 2>/dev/null || cp main.py dist_final/main.py
+
+          # Copy PyArmor runtime
+          cp -r dist_obfuscated/pyarmor_runtime_* dist_final/ 2>/dev/null || true
+
+          # Write minimal __init__.py files
+          for d in app app/api app/models app/services; do
+            echo "# Protected build" > "dist_final/$d/__init__.py"
+          done
+
+          # Remove .py files where .so exists
+          cd dist_final
+          for so in $(find . -name "*.cpython-*.so"); do
+            base=$(echo "$so" | sed 's/\.cpython-[^.]*\.so$/.py/')
+            rm -f "$base"
+          done
+          cd ..
+
+          # Create archive
+          tar -czf wa-dashboard-protected.tar.gz -C dist_final .
+          echo "✓ Protected archive created"
+          ls -lh wa-dashboard-protected.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wa-dashboard-protected
+          path: wa-dashboard-protected.tar.gz
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: wa-dashboard-protected.tar.gz
+          body: |
+            Protected build of WhatsApp Campaign Dashboard.
+            
+            This archive contains compiled .so binaries and obfuscated Python.
+            No readable source code is included.
+            
+            **Deploy instructions:**
+            ```bash
+            tar -xzf wa-dashboard-protected.tar.gz -C /opt/wa-dashboard
+            cd /opt/wa-dashboard
+            pip install -r requirements.txt
+            uvicorn main:app --host 0.0.0.0 --port 8000
+            ```
+
+  deploy:
+    name: Deploy to Server
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wa-dashboard-protected
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            # Backup current deployment
+            if [ -d /opt/wa-dashboard ]; then
+              cp -r /opt/wa-dashboard /opt/wa-dashboard.backup.$(date +%Y%m%d)
+            fi
+
+            # Deploy new version
+            mkdir -p /opt/wa-dashboard
+            # The archive will be transferred via scp in the next step
+
+      - name: Transfer and extract
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: wa-dashboard-protected.tar.gz
+          target: /tmp/
+
+      - name: Finalize deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            # Extract protected build
+            mkdir -p /opt/wa-dashboard
+            tar -xzf /tmp/wa-dashboard-protected.tar.gz -C /opt/wa-dashboard
+            rm /tmp/wa-dashboard-protected.tar.gz
+
+            # Install/update dependencies
+            cd /opt/wa-dashboard
+            if [ ! -d venv ]; then
+              python3.11 -m venv venv
+            fi
+            source venv/bin/activate
+            pip install -r requirements.txt
+
+            # Restart service
+            sudo systemctl restart wa-dashboard
+
+            # Verify
+            sleep 3
+            if curl -sf http://localhost:8000/api/agent/health > /dev/null; then
+              echo "✅ Deployed successfully!"
+            else
+              echo "⚠️  Service may still be starting..."
+            fi

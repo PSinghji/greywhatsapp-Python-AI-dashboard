@@ -1,0 +1,120 @@
+# ═══════════════════════════════════════════════════════════════
+# MULTI-STAGE DOCKER BUILD — Protected WhatsApp Campaign Dashboard
+# ═══════════════════════════════════════════════════════════════
+# Stage 1: Build (compiles + obfuscates code)
+# Stage 2: Runtime (contains ONLY compiled binaries, no source)
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Stage 1: Builder ──────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    python3-dev \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python build tools
+RUN pip install --no-cache-dir pyarmor cython setuptools
+
+# Copy source code (this is the ONLY stage that sees source)
+COPY . /build/source/
+
+WORKDIR /build/source
+
+# ─── Cython Compilation ────────────────────────────────────
+# Compile critical Python files to .so binaries
+RUN python3 setup_cython.py build_ext --inplace 2>&1 | tail -10
+
+# ─── PyArmor Obfuscation ───────────────────────────────────
+# Obfuscate the main entry point
+RUN pyarmor gen --output /build/obfuscated main.py
+
+# Obfuscate remaining app files that weren't Cython-compiled
+RUN pyarmor gen --output /build/obfuscated --recursive app/ || true
+
+# ─── Assemble Protected Build ──────────────────────────────
+RUN mkdir -p /build/final/app/api \
+             /build/final/app/models \
+             /build/final/app/services \
+             /build/final/app/templates \
+             /build/final/app/static \
+             /build/final/uploads
+
+# Copy templates and static files (not sensitive)
+RUN cp -r /build/source/app/templates/* /build/final/app/templates/
+RUN cp -r /build/source/app/static/* /build/final/app/static/
+RUN cp /build/source/requirements.txt /build/final/
+RUN cp /build/source/.env.example /build/final/ 2>/dev/null || true
+
+# Copy compiled .so binaries (PRIORITY: these replace .py files)
+RUN find /build/source -name "*.cpython-*.so" -exec sh -c '\
+    for f; do \
+        rel="${f#/build/source/}"; \
+        dir=$(dirname "$rel"); \
+        mkdir -p "/build/final/$dir"; \
+        cp "$f" "/build/final/$dir/"; \
+    done' sh {} +
+
+# Copy obfuscated main.py
+RUN cp /build/obfuscated/main.py /build/final/main.py 2>/dev/null || \
+    cp /build/source/main.py /build/final/main.py
+
+# Copy PyArmor runtime (required for obfuscated files to work)
+RUN cp -r /build/obfuscated/pyarmor_runtime_* /build/final/ 2>/dev/null || true
+
+# Write minimal __init__.py files (needed for Python package imports)
+RUN for d in app app/api app/models app/services; do \
+        echo "# Protected build" > "/build/final/$d/__init__.py"; \
+    done
+
+# For any module that has a .so, remove the .py version
+RUN cd /build/final && \
+    for so in $(find . -name "*.cpython-*.so"); do \
+        base=$(echo "$so" | sed 's/\.cpython-[^.]*\.so$/.py/'); \
+        rm -f "$base"; \
+    done
+
+# Verify: list what's in the final build
+RUN echo "=== FINAL BUILD CONTENTS ===" && \
+    echo "--- Compiled .so binaries ---" && \
+    find /build/final -name "*.so" && \
+    echo "--- Python files (obfuscated/minimal) ---" && \
+    find /build/final -name "*.py" && \
+    echo "--- Templates ---" && \
+    find /build/final -name "*.html" | head -5
+
+
+# ─── Stage 2: Runtime (CLEAN — no source code) ─────────────
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+# Install only runtime dependencies
+COPY --from=builder /build/final/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy ONLY the protected build (no source code ever touches this stage)
+COPY --from=builder /build/final/ .
+
+# Create uploads directory
+RUN mkdir -p uploads
+
+# The /app directory now contains:
+#   - .so compiled binaries (unreadable machine code)
+#   - Obfuscated main.py (PyArmor protected)
+#   - Minimal __init__.py files
+#   - HTML templates & static assets
+#   - NO original Python source code
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/agent/health')" || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

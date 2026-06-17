@@ -1,0 +1,1277 @@
+{% extends "base.html" %}
+{% block title %}Campaigns - WA Campaign{% endblock %}
+{% block nav_campaigns %}active{% endblock %}
+{% block page_title %}Campaigns{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-primary btn-sm" onclick="openModal('newCampaignModal')"><i class="fas fa-plus"></i> New Campaign</button>
+<button class="btn btn-ghost btn-sm" onclick="exportCampaignsCSV()"><i class="fas fa-file-csv"></i> Export CSV</button>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Campaign</th>
+                        <th>Status</th>
+                        <th>Type</th>
+                        <th>Progress</th>
+                        <th>Devices</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="campaignsTable">
+                    <tr><td colspan="6" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="paginationControls"></div>
+    </div>
+</div>
+
+<!-- New Campaign Modal -->
+<div class="modal-overlay" id="newCampaignModal">
+    <div class="modal" style="max-width:750px">
+        <div class="modal-header">
+            <h3>Create Campaign</h3>
+            <button class="modal-close" onclick="closeModal('newCampaignModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Campaign Name *</label>
+                <input type="text" class="form-control" id="campName" placeholder="Summer Promo 2026">
+            </div>
+
+            <div class="form-group">
+                <label>Message Type</label>
+                <select class="form-control" id="campMsgType" onchange="onMsgTypeChange()">
+                    <option value="text">Text Only</option>
+                    <option value="image">Single Image + Caption</option>
+                    <option value="pdf">Single PDF Document</option>
+                    <option value="video">Single Video</option>
+                    <option value="multi_media">Multi-Media (Images + PDF + Video)</option>
+                </select>
+            </div>
+
+            <!-- Message / Caption Content - always visible -->
+            <div class="form-group" id="messageContentGroup">
+                <label id="messageContentLabel">Message Content *</label>
+                <textarea class="form-control" id="campMessage" rows="4" maxlength="1024" placeholder="Hello! This is our special offer..." oninput="updateCharCounter('campMessage','campMessageCounter')"></textarea>
+                <div class="char-counter-row">
+                    <span class="text-sm text-muted" id="messageContentHint" style="display:none">
+                        <i class="fas fa-info-circle"></i> This text will be sent as caption with the first media item.
+                    </span>
+                    <span class="char-counter" id="campMessageCounter">0 / 1024</span>
+                </div>
+            </div>
+
+            <!-- Single Media Upload Section (for image/pdf/video types) -->
+            <div class="form-group" id="mediaUploadGroup" style="display:none">
+                <label>Upload Media File *</label>
+                <div class="media-upload-area" id="mediaUploadArea">
+                    <div id="uploadZone" class="upload-zone" onclick="document.getElementById('campMediaFile').click()">
+                        <input type="file" id="campMediaFile" accept="image/*,.pdf,video/mp4" style="display:none" onchange="handleFileSelect(this)">
+                        <div class="upload-zone-content">
+                            <i class="fas fa-cloud-upload-alt" style="font-size:32px;color:var(--accent-primary);margin-bottom:8px"></i>
+                            <p style="font-size:14px;font-weight:500;color:var(--text-primary)">Click to upload or drag & drop</p>
+                            <p style="font-size:12px;color:var(--text-muted);margin-top:4px" id="uploadHint">Images (JPG, PNG, GIF), PDF, Video (MP4) — Max 50MB</p>
+                        </div>
+                    </div>
+                    <div id="uploadProgress" style="display:none">
+                        <div class="flex items-center gap-3" style="padding:12px 0">
+                            <div class="spinner"></div>
+                            <span style="font-size:13px;color:var(--text-secondary)">Uploading <span id="uploadFileName"></span>...</span>
+                        </div>
+                        <div class="progress-bar" style="margin-top:4px">
+                            <div class="progress-fill" id="uploadProgressBar" style="width:0%"></div>
+                        </div>
+                    </div>
+                    <div id="uploadResult" style="display:none">
+                        <div class="uploaded-file-card">
+                            <div class="uploaded-file-preview" id="uploadedPreview"></div>
+                            <div class="uploaded-file-info">
+                                <div class="uploaded-file-name" id="uploadedFileName"></div>
+                                <div class="uploaded-file-size" id="uploadedFileSize"></div>
+                                <div class="uploaded-file-url">
+                                    <label style="font-size:11px;color:var(--text-muted);margin-bottom:2px;display:block">Public Media URL (auto-generated)</label>
+                                    <div class="url-copy-box">
+                                        <input type="text" class="form-control" id="campMediaUrl" readonly style="font-family:monospace;font-size:12px;background:var(--bg-primary)">
+                                        <button class="btn btn-ghost btn-sm" onclick="copyMediaUrl()" title="Copy URL">
+                                            <i class="fas fa-copy"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="btn btn-danger btn-sm btn-icon uploaded-file-remove" onclick="removeUploadedFile()" title="Remove">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Caption for single media messages -->
+            <div class="form-group" id="captionGroup" style="display:none">
+                <label>Caption (shown with media)</label>
+                <textarea class="form-control" id="campCaption" rows="2" maxlength="1024" placeholder="Caption text to send with the media..." oninput="updateCharCounter('campCaption','campCaptionCounter')"></textarea>
+                <div class="char-counter-row">
+                    <span></span>
+                    <span class="char-counter" id="campCaptionCounter">0 / 1024</span>
+                </div>
+            </div>
+
+            <!-- ═══ MULTI-MEDIA UPLOAD SECTION ═══ -->
+            <div class="form-group" id="multiMediaGroup" style="display:none">
+                <label>Upload Media Files</label>
+                <div class="multi-media-limits">
+                    <span class="mm-limit" id="mmLimitImages"><i class="fas fa-image"></i> Images: <strong id="mmCountImages">0</strong>/2</span>
+                    <span class="mm-limit" id="mmLimitPdf"><i class="fas fa-file-pdf"></i> PDF: <strong id="mmCountPdf">0</strong>/1</span>
+                    <span class="mm-limit" id="mmLimitVideo"><i class="fas fa-video"></i> Video: <strong id="mmCountVideo">0</strong>/1</span>
+                    <span class="mm-limit mm-total"><i class="fas fa-layer-group"></i> Total: <strong id="mmCountTotal">0</strong>/4</span>
+                </div>
+
+                <!-- Multi-media upload zone -->
+                <div id="mmUploadZone" class="upload-zone" onclick="document.getElementById('mmFileInput').click()">
+                    <input type="file" id="mmFileInput" accept="image/jpeg,image/png,image/gif,image/webp,.pdf,application/pdf,video/mp4,video/3gpp" style="display:none" onchange="handleMultiMediaSelect(this)" multiple>
+                    <div class="upload-zone-content">
+                        <i class="fas fa-cloud-upload-alt" style="font-size:28px;color:var(--accent-primary);margin-bottom:6px"></i>
+                        <p style="font-size:14px;font-weight:500;color:var(--text-primary)">Click to add media files</p>
+                        <p style="font-size:12px;color:var(--text-muted);margin-top:4px">Max 2 images + 1 PDF + 1 video (50MB each)</p>
+                    </div>
+                </div>
+
+                <!-- Multi-media upload progress -->
+                <div id="mmUploadProgress" style="display:none">
+                    <div class="flex items-center gap-3" style="padding:12px 0">
+                        <div class="spinner"></div>
+                        <span style="font-size:13px;color:var(--text-secondary)">Uploading <span id="mmUploadingName"></span>...</span>
+                    </div>
+                    <div class="progress-bar" style="margin-top:4px">
+                        <div class="progress-fill" id="mmProgressBar" style="width:0%"></div>
+                    </div>
+                </div>
+
+                <!-- Multi-media uploaded items list -->
+                <div id="mmItemsList" class="mm-items-list"></div>
+            </div>
+
+            <!-- Recipients with Country Code Selector -->
+            <div class="form-group">
+                <label>Recipients (one phone number per line) *</label>
+                <div class="country-code-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+                    <label style="font-size:13px;color:var(--text-secondary);white-space:nowrap;margin:0">Country Code:</label>
+                    <select class="form-control" id="campCountryCode" style="width:220px;flex-shrink:0">
+                        <option value="+91" selected>🇮🇳 India (+91)</option>
+                        <option value="+1">🇺🇸 USA (+1)</option>
+                        <option value="+44">🇬🇧 UK (+44)</option>
+                        <option value="+971">🇦🇪 UAE (+971)</option>
+                        <option value="+966">🇸🇦 Saudi Arabia (+966)</option>
+                        <option value="+61">🇦🇺 Australia (+61)</option>
+                        <option value="+49">🇩🇪 Germany (+49)</option>
+                        <option value="+33">🇫🇷 France (+33)</option>
+                        <option value="+81">🇯🇵 Japan (+81)</option>
+                        <option value="+86">🇨🇳 China (+86)</option>
+                        <option value="+55">🇧🇷 Brazil (+55)</option>
+                        <option value="+7">🇷🇺 Russia (+7)</option>
+                        <option value="+27">🇿🇦 South Africa (+27)</option>
+                        <option value="+234">🇳🇬 Nigeria (+234)</option>
+                        <option value="+254">🇰🇪 Kenya (+254)</option>
+                        <option value="+92">🇵🇰 Pakistan (+92)</option>
+                        <option value="+880">🇧🇩 Bangladesh (+880)</option>
+                        <option value="+94">🇱🇰 Sri Lanka (+94)</option>
+                        <option value="+977">🇳🇵 Nepal (+977)</option>
+                        <option value="+60">🇲🇾 Malaysia (+60)</option>
+                        <option value="+65">🇸🇬 Singapore (+65)</option>
+                        <option value="+62">🇮🇩 Indonesia (+62)</option>
+                        <option value="+63">🇵🇭 Philippines (+63)</option>
+                        <option value="+66">🇹🇭 Thailand (+66)</option>
+                        <option value="+82">🇰🇷 South Korea (+82)</option>
+                        <option value="+39">🇮🇹 Italy (+39)</option>
+                        <option value="+34">🇪🇸 Spain (+34)</option>
+                        <option value="+31">🇳🇱 Netherlands (+31)</option>
+                        <option value="+46">🇸🇪 Sweden (+46)</option>
+                        <option value="+41">🇨🇭 Switzerland (+41)</option>
+                        <option value="+52">🇲🇽 Mexico (+52)</option>
+                        <option value="+54">🇦🇷 Argentina (+54)</option>
+                        <option value="+57">🇨🇴 Colombia (+57)</option>
+                        <option value="+20">🇪🇬 Egypt (+20)</option>
+                        <option value="+90">🇹🇷 Turkey (+90)</option>
+                        <option value="+48">🇵🇱 Poland (+48)</option>
+                        <option value="">Custom (include code in numbers)</option>
+                    </select>
+                </div>
+                <textarea class="form-control" id="campRecipients" rows="5" placeholder="9876543210&#10;9123456789&#10;8765432109&#10;&#10;Enter numbers without country code — it will be added automatically"></textarea>
+                <div style="margin-top:6px;font-size:12px;color:var(--text-muted)">
+                    <i class="fas fa-info-circle"></i> Enter numbers without country code. The selected code will be prepended automatically. 
+                    If numbers already include country code (e.g. +91...), select "Custom" above.
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>WhatsApp Account Type</label>
+                <select class="form-control" id="campAccountType">
+                    <option value="">Auto (use default)</option>
+                    <option value="personal">Personal WhatsApp</option>
+                    <option value="business">Business WhatsApp</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Tuning Profile</label>
+                <select class="form-control" id="campProfile"></select>
+            </div>
+            <div class="form-group">
+                <label>Assign Devices (leave empty for auto-assign to all online)</label>
+                <select class="form-control" id="campDevices" multiple style="min-height:80px"></select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('newCampaignModal')">Cancel</button>
+            <button class="btn btn-primary" id="createCampBtn" onclick="createCampaign()">Create Campaign</button>
+        </div>
+    </div>
+</div>
+
+<!-- View Campaign Details Modal -->
+<div class="modal-overlay" id="viewCampaignModal">
+    <div class="modal" style="max-width:650px">
+        <div class="modal-header">
+            <h3 id="viewCampTitle">Campaign Details</h3>
+            <button class="modal-close" onclick="closeModal('viewCampaignModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="viewCampBody"></div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('viewCampaignModal')">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+/* Upload Zone Styles */
+.upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: var(--transition);
+    background: var(--bg-input);
+}
+.upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--accent-primary);
+    background: rgba(99, 102, 241, 0.05);
+}
+.upload-zone-content { pointer-events: none; }
+
+/* Uploaded File Card */
+.uploaded-file-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--accent-green);
+    border-radius: var(--radius);
+    position: relative;
+}
+.uploaded-file-preview {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+}
+.uploaded-file-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.uploaded-file-info { flex: 1; min-width: 0; }
+.uploaded-file-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+    word-break: break-all;
+}
+.uploaded-file-size {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+.uploaded-file-remove {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+}
+.url-copy-box {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.url-copy-box .form-control {
+    flex: 1;
+    padding: 6px 10px;
+}
+
+/* ═══ Character Counter Styles ═══ */
+.char-counter-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 4px;
+}
+.char-counter {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+}
+.char-counter.warning {
+    color: var(--accent-yellow, #eab308);
+    font-weight: 600;
+}
+.char-counter.limit {
+    color: var(--accent-red, #ef4444);
+    font-weight: 700;
+}
+
+/* ═══ Multi-Media Styles ═══ */
+.multi-media-limits {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+}
+.mm-limit {
+    font-size: 13px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.mm-limit i { font-size: 14px; }
+.mm-limit strong { color: var(--text-primary); }
+.mm-limit.mm-full strong { color: var(--accent-red); }
+.mm-limit.mm-total { margin-left: auto; }
+
+.mm-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+.mm-item-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+}
+.mm-item-card:hover {
+    border-color: var(--accent-primary);
+}
+.mm-item-order {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+.mm-item-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+}
+.mm-item-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.mm-item-info {
+    flex: 1;
+    min-width: 0;
+}
+.mm-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mm-item-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+.mm-item-type-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.mm-item-type-badge.type-image { background: rgba(99, 102, 241, 0.15); color: var(--accent-primary); }
+.mm-item-type-badge.type-pdf { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+.mm-item-type-badge.type-video { background: rgba(59, 130, 246, 0.15); color: var(--accent-blue); }
+.mm-item-remove {
+    flex-shrink: 0;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: var(--transition);
+    padding: 4px;
+}
+.mm-item-remove:hover { color: var(--accent-red); }
+.mm-item-first-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-green);
+    font-weight: 600;
+    flex-shrink: 0;
+}
+</style>
+
+<script>
+const MAX_TEXT_LENGTH = 1024;
+
+let allDevices = [];
+let uploadedMediaData = null;
+
+// ═══ CHARACTER COUNTER ═══
+function updateCharCounter(textareaId, counterId) {
+    const textarea = document.getElementById(textareaId);
+    const counter = document.getElementById(counterId);
+    if (!textarea || !counter) return;
+
+    const len = textarea.value.length;
+    counter.textContent = len + ' / ' + MAX_TEXT_LENGTH;
+
+    // Color coding
+    counter.classList.remove('warning', 'limit');
+    if (len >= MAX_TEXT_LENGTH) {
+        counter.classList.add('limit');
+    } else if (len >= MAX_TEXT_LENGTH * 0.9) {
+        counter.classList.add('warning');
+    }
+}
+
+// Also enforce on paste - trim to 1024 if pasted text exceeds
+function enforceMaxLength(textareaId, counterId) {
+    const textarea = document.getElementById(textareaId);
+    if (!textarea) return;
+
+    textarea.addEventListener('paste', function(e) {
+        // Let the paste happen, then trim after
+        setTimeout(() => {
+            if (textarea.value.length > MAX_TEXT_LENGTH) {
+                textarea.value = textarea.value.substring(0, MAX_TEXT_LENGTH);
+                showToast('Text trimmed to ' + MAX_TEXT_LENGTH + ' characters (maximum limit)', 'warning');
+            }
+            updateCharCounter(textareaId, counterId);
+        }, 10);
+    });
+
+    // Also enforce on input (covers typing)
+    textarea.addEventListener('input', function() {
+        if (textarea.value.length > MAX_TEXT_LENGTH) {
+            textarea.value = textarea.value.substring(0, MAX_TEXT_LENGTH);
+        }
+        updateCharCounter(textareaId, counterId);
+    });
+}
+
+// ═══ MULTI-MEDIA STATE ═══
+let multiMediaItems = []; // Array of { type, url, name, size, contentType, uploadId, caption }
+
+const MM_LIMITS = { image: 2, pdf: 1, video: 1, total: 4 };
+
+function getMultiMediaCounts() {
+    const counts = { image: 0, pdf: 0, video: 0, total: multiMediaItems.length };
+    multiMediaItems.forEach(item => {
+        if (item.type === 'image') counts.image++;
+        else if (item.type === 'pdf') counts.pdf++;
+        else if (item.type === 'video') counts.video++;
+    });
+    return counts;
+}
+
+function updateMultiMediaUI() {
+    const counts = getMultiMediaCounts();
+    document.getElementById('mmCountImages').textContent = counts.image;
+    document.getElementById('mmCountPdf').textContent = counts.pdf;
+    document.getElementById('mmCountVideo').textContent = counts.video;
+    document.getElementById('mmCountTotal').textContent = counts.total;
+
+    // Highlight limits that are full
+    document.getElementById('mmLimitImages').classList.toggle('mm-full', counts.image >= MM_LIMITS.image);
+    document.getElementById('mmLimitPdf').classList.toggle('mm-full', counts.pdf >= MM_LIMITS.pdf);
+    document.getElementById('mmLimitVideo').classList.toggle('mm-full', counts.video >= MM_LIMITS.video);
+
+    // Hide upload zone if all slots are full
+    const allFull = counts.total >= MM_LIMITS.total;
+    document.getElementById('mmUploadZone').style.display = allFull ? 'none' : 'block';
+
+    // Update accepted file types based on remaining slots
+    const accepts = [];
+    if (counts.image < MM_LIMITS.image) accepts.push('image/jpeg', 'image/png', 'image/gif', 'image/webp');
+    if (counts.pdf < MM_LIMITS.pdf) accepts.push('.pdf', 'application/pdf');
+    if (counts.video < MM_LIMITS.video) accepts.push('video/mp4', 'video/3gpp');
+    document.getElementById('mmFileInput').accept = accepts.join(',');
+
+    // Render items list
+    const listEl = document.getElementById('mmItemsList');
+    if (multiMediaItems.length === 0) {
+        listEl.innerHTML = '';
+        return;
+    }
+
+    listEl.innerHTML = multiMediaItems.map((item, idx) => {
+        let iconHtml;
+        if (item.type === 'image' && item.previewUrl) {
+            iconHtml = `<img src="${item.previewUrl}" alt="Preview">`;
+        } else if (item.type === 'pdf') {
+            iconHtml = '<i class="fas fa-file-pdf" style="font-size:20px;color:var(--accent-red)"></i>';
+        } else if (item.type === 'video') {
+            iconHtml = '<i class="fas fa-file-video" style="font-size:20px;color:var(--accent-blue)"></i>';
+        } else {
+            iconHtml = '<i class="fas fa-image" style="font-size:20px;color:var(--accent-primary)"></i>';
+        }
+
+        return `
+        <div class="mm-item-card" data-index="${idx}">
+            <div class="mm-item-order">${idx + 1}</div>
+            <div class="mm-item-icon">${iconHtml}</div>
+            <div class="mm-item-info">
+                <div class="mm-item-name">${item.name}</div>
+                <div class="mm-item-meta">${formatFileSize(item.size)} &middot; ${item.type.toUpperCase()}</div>
+            </div>
+            ${idx === 0 ? '<span class="mm-item-first-badge">Text attached</span>' : ''}
+            <span class="mm-item-type-badge type-${item.type}">${item.type}</span>
+            <div class="mm-item-remove" onclick="removeMultiMediaItem(${idx})" title="Remove">
+                <i class="fas fa-times"></i>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function detectMediaType(file) {
+    const ct = file.type || '';
+    if (ct.startsWith('image/')) return 'image';
+    if (ct === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) return 'pdf';
+    if (ct.startsWith('video/')) return 'video';
+    return null;
+}
+
+async function handleMultiMediaSelect(input) {
+    if (!input.files || !input.files.length) return;
+    const files = Array.from(input.files);
+    const counts = getMultiMediaCounts();
+
+    for (const file of files) {
+        const mediaType = detectMediaType(file);
+        if (!mediaType) {
+            showToast(`Unsupported file type: ${file.name}`, 'warning');
+            continue;
+        }
+
+        // Check limits
+        const currentCounts = getMultiMediaCounts();
+        if (currentCounts.total >= MM_LIMITS.total) {
+            showToast('Maximum 4 media items reached', 'warning');
+            break;
+        }
+        if (mediaType === 'image' && currentCounts.image >= MM_LIMITS.image) {
+            showToast('Maximum 2 images allowed', 'warning');
+            continue;
+        }
+        if (mediaType === 'pdf' && currentCounts.pdf >= MM_LIMITS.pdf) {
+            showToast('Maximum 1 PDF allowed', 'warning');
+            continue;
+        }
+        if (mediaType === 'video' && currentCounts.video >= MM_LIMITS.video) {
+            showToast('Maximum 1 video allowed', 'warning');
+            continue;
+        }
+
+        if (file.size > 50 * 1024 * 1024) {
+            showToast(`File too large: ${file.name} (${(file.size / (1024*1024)).toFixed(1)}MB). Max 50MB.`, 'error');
+            continue;
+        }
+
+        // Upload the file
+        document.getElementById('mmUploadZone').style.display = 'none';
+        document.getElementById('mmUploadProgress').style.display = 'block';
+        document.getElementById('mmUploadingName').textContent = file.name;
+        const progressBar = document.getElementById('mmProgressBar');
+        progressBar.style.width = '10%';
+
+        try {
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('description', 'Campaign media: ' + file.name);
+
+            let progress = 10;
+            const progressInterval = setInterval(() => {
+                if (progress < 85) {
+                    progress += Math.random() * 15;
+                    progressBar.style.width = Math.min(progress, 85) + '%';
+                }
+            }, 200);
+
+            const result = await api.upload('/api/media/upload', fd);
+            clearInterval(progressInterval);
+            progressBar.style.width = '100%';
+
+            const publicUrl = result.publicUrl || (window.location.origin + result.url);
+
+            multiMediaItems.push({
+                type: mediaType,
+                url: publicUrl,
+                name: result.filename || file.name,
+                size: result.size || file.size,
+                contentType: result.contentType || file.type,
+                uploadId: result._id || null,
+                previewUrl: mediaType === 'image' ? (result.url || publicUrl) : null,
+                caption: null
+            });
+
+            showToast(`${file.name} uploaded successfully`, 'success');
+        } catch (err) {
+            showToast(`Failed to upload ${file.name}: ${err.message}`, 'error');
+        }
+
+        document.getElementById('mmUploadProgress').style.display = 'none';
+        updateMultiMediaUI();
+    }
+
+    // Reset file input
+    input.value = '';
+}
+
+function removeMultiMediaItem(index) {
+    const item = multiMediaItems[index];
+    if (item && item.uploadId) {
+        api.del('/api/media/' + item.uploadId).catch(() => {});
+    }
+    multiMediaItems.splice(index, 1);
+    updateMultiMediaUI();
+}
+
+// ─── Message Type Change ────────────────────────────────
+function onMsgTypeChange() {
+    const type = document.getElementById('campMsgType').value;
+    const isMedia = (type !== 'text' && type !== 'multi_media');
+    const isMulti = (type === 'multi_media');
+    
+    // Show/hide sections based on type
+    document.getElementById('messageContentGroup').style.display = 'block'; // Always show
+    document.getElementById('mediaUploadGroup').style.display = isMedia ? 'block' : 'none';
+    document.getElementById('captionGroup').style.display = isMedia ? 'block' : 'none';
+    document.getElementById('multiMediaGroup').style.display = isMulti ? 'block' : 'none';
+
+    // Update label and hint for message content
+    if (type === 'text') {
+        document.getElementById('messageContentLabel').textContent = 'Message Content *';
+        document.getElementById('messageContentHint').style.display = 'none';
+    } else if (isMulti) {
+        document.getElementById('messageContentLabel').textContent = 'Message Text / Caption *';
+        document.getElementById('messageContentHint').style.display = 'block';
+    } else {
+        document.getElementById('messageContentLabel').textContent = 'Message Content';
+        document.getElementById('messageContentHint').style.display = 'none';
+    }
+
+    // Update accepted file types for single media
+    if (isMedia) {
+        const fileInput = document.getElementById('campMediaFile');
+        if (type === 'image') {
+            fileInput.accept = 'image/jpeg,image/png,image/gif,image/webp';
+            document.getElementById('uploadHint').textContent = 'Images: JPG, PNG, GIF, WebP — Max 50MB';
+        } else if (type === 'pdf') {
+            fileInput.accept = '.pdf,application/pdf';
+            document.getElementById('uploadHint').textContent = 'PDF documents only — Max 50MB';
+        } else if (type === 'video') {
+            fileInput.accept = 'video/mp4,video/3gpp';
+            document.getElementById('uploadHint').textContent = 'Video: MP4, 3GP — Max 50MB';
+        }
+    }
+}
+
+// ─── Drag & Drop (Single Media) ─────────────────────────
+const uploadZoneEl = document.getElementById('uploadZone');
+if (uploadZoneEl) {
+    uploadZoneEl.addEventListener('dragover', (e) => { e.preventDefault(); uploadZoneEl.classList.add('dragover'); });
+    uploadZoneEl.addEventListener('dragleave', () => { uploadZoneEl.classList.remove('dragover'); });
+    uploadZoneEl.addEventListener('drop', (e) => {
+        e.preventDefault(); uploadZoneEl.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            const fileInput = document.getElementById('campMediaFile');
+            fileInput.files = e.dataTransfer.files;
+            handleFileSelect(fileInput);
+        }
+    });
+}
+
+// ─── Drag & Drop (Multi-Media) ──────────────────────────
+const mmUploadZoneEl = document.getElementById('mmUploadZone');
+if (mmUploadZoneEl) {
+    mmUploadZoneEl.addEventListener('dragover', (e) => { e.preventDefault(); mmUploadZoneEl.classList.add('dragover'); });
+    mmUploadZoneEl.addEventListener('dragleave', () => { mmUploadZoneEl.classList.remove('dragover'); });
+    mmUploadZoneEl.addEventListener('drop', (e) => {
+        e.preventDefault(); mmUploadZoneEl.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            const fileInput = document.getElementById('mmFileInput');
+            fileInput.files = e.dataTransfer.files;
+            handleMultiMediaSelect(fileInput);
+        }
+    });
+}
+
+// ─── File Select & Upload (Single Media) ────────────────
+async function handleFileSelect(input) {
+    if (!input.files || !input.files.length) return;
+    const file = input.files[0];
+    if (file.size > 50 * 1024 * 1024) {
+        showToast('File too large. Maximum size is 50MB. Your file is ' + (file.size / (1024*1024)).toFixed(1) + 'MB.', 'error');
+        input.value = '';
+        return;
+    }
+    document.getElementById('uploadZone').style.display = 'none';
+    document.getElementById('uploadResult').style.display = 'none';
+    document.getElementById('uploadProgress').style.display = 'block';
+    document.getElementById('uploadFileName').textContent = file.name;
+    const progressBar = document.getElementById('uploadProgressBar');
+    progressBar.style.width = '10%';
+    try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('description', 'Campaign media: ' + file.name);
+        let progress = 10;
+        const progressInterval = setInterval(() => {
+            if (progress < 85) { progress += Math.random() * 15; progressBar.style.width = Math.min(progress, 85) + '%'; }
+        }, 200);
+        const result = await api.upload('/api/media/upload', fd);
+        clearInterval(progressInterval);
+        progressBar.style.width = '100%';
+        uploadedMediaData = result;
+        const publicUrl = result.publicUrl || (window.location.origin + result.url);
+        setTimeout(() => {
+            document.getElementById('uploadProgress').style.display = 'none';
+            document.getElementById('uploadResult').style.display = 'block';
+            document.getElementById('uploadedFileName').textContent = result.filename;
+            document.getElementById('uploadedFileSize').textContent = formatFileSize(result.size);
+            document.getElementById('campMediaUrl').value = publicUrl;
+            const previewEl = document.getElementById('uploadedPreview');
+            if (result.contentType && result.contentType.startsWith('image/')) {
+                previewEl.innerHTML = `<img src="${result.url}" alt="Preview">`;
+            } else if (result.contentType === 'application/pdf') {
+                previewEl.innerHTML = '<i class="fas fa-file-pdf" style="font-size:28px;color:var(--accent-red)"></i>';
+            } else if (result.contentType && result.contentType.startsWith('video/')) {
+                previewEl.innerHTML = '<i class="fas fa-file-video" style="font-size:28px;color:var(--accent-blue)"></i>';
+            } else {
+                previewEl.innerHTML = '<i class="fas fa-file" style="font-size:28px;color:var(--text-muted)"></i>';
+            }
+            showToast('Media uploaded! Public URL generated.', 'success');
+        }, 300);
+    } catch (err) {
+        document.getElementById('uploadProgress').style.display = 'none';
+        document.getElementById('uploadZone').style.display = 'block';
+        showToast('Upload failed: ' + err.message, 'error');
+        input.value = '';
+    }
+}
+
+// ─── Remove Uploaded File (Single Media) ────────────────
+function removeUploadedFile() {
+    if (uploadedMediaData && uploadedMediaData._id) {
+        api.del('/api/media/' + uploadedMediaData._id).catch(() => {});
+    }
+    uploadedMediaData = null;
+    document.getElementById('campMediaFile').value = '';
+    document.getElementById('campMediaUrl').value = '';
+    document.getElementById('uploadResult').style.display = 'none';
+    document.getElementById('uploadZone').style.display = 'block';
+}
+
+// ─── Copy URL ───────────────────────────────────────────
+function copyMediaUrl() {
+    const urlInput = document.getElementById('campMediaUrl');
+    urlInput.select();
+    document.execCommand('copy');
+    showToast('URL copied to clipboard!', 'success');
+}
+
+// ─── Format File Size ───────────────────────────────────
+function formatFileSize(bytes) {
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// ─── Process Recipients with Country Code ───────────────
+function processRecipients() {
+    const countryCode = document.getElementById('campCountryCode').value;
+    const raw = document.getElementById('campRecipients').value.trim();
+    if (!raw) return [];
+    return raw.split('\n').map(r => {
+        let num = r.trim().replace(/[\s\-\(\)]/g, '');
+        if (!num) return null;
+        if (!countryCode) {
+            if (!num.startsWith('+')) num = '+' + num;
+            return num;
+        }
+        if (num.startsWith(countryCode)) return num;
+        if (num.startsWith('+')) return num;
+        if (num.startsWith('0')) num = num.substring(1);
+        return countryCode + num;
+    }).filter(Boolean);
+}
+
+let allCampaigns = [];
+let campaignsCurrentPage = 1;
+const campaignsRowsPerPage = 10;
+
+// ─── Load Campaigns ─────────────────────────────────────
+async function loadCampaigns() {
+    try {
+        allCampaigns = await api.get('/api/campaigns');
+        campaignsCurrentPage = 1;
+        renderCampaignsTable();
+    } catch (err) {
+        showToast('Failed to load campaigns: ' + err.message, 'error');
+    }
+}
+
+function renderCampaignsTable() {
+    const tbody = document.getElementById('campaignsTable');
+    const paginationControls = document.getElementById('paginationControls');
+
+    if (allCampaigns.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><i class="fas fa-bullhorn"></i><p>No campaigns yet. Create one to get started.</p></td></tr>';
+        paginationControls.innerHTML = '';
+        return;
+    }
+
+    const start = (campaignsCurrentPage - 1) * campaignsRowsPerPage;
+    const end = start + campaignsRowsPerPage;
+    const paginatedCampaigns = allCampaigns.slice(start, end);
+
+    tbody.innerHTML = paginatedCampaigns.map(c => {
+        const s = c.stats || { sent: 0, failed: 0, pending: 0 };
+        const total = s.sent + s.failed + s.pending;
+        const progress = total > 0 ? Math.round((s.sent / total) * 100) : 0;
+        const msgType = (c.messages && c.messages[0]) ? c.messages[0].type : 'text';
+        const typeIcons = { text: 'fa-comment', image: 'fa-image', pdf: 'fa-file-pdf', video: 'fa-video', multi_media: 'fa-layer-group' };
+        const typeLabels = { text: 'text', image: 'image', pdf: 'pdf', video: 'video', multi_media: 'multi' };
+        
+        const deviceNames = (c.assignedDevices || []).map(deviceId => {
+            const device = allDevices.find(d => d.deviceId === deviceId);
+            return device ? device.deviceName : deviceId.substring(0, 12);
+        }).join(', ');
+
+        return `
+        <tr>
+            <td>
+                <strong style="cursor:pointer;color:var(--accent-primary)" onclick="viewCampaign('${c._id}')">${c.name}</strong>
+            </td>
+            <td>${statusBadge(c.status)}</td>
+            <td><i class="fas ${typeIcons[msgType] || 'fa-comment'}" style="color:var(--text-secondary)"></i> ${typeLabels[msgType] || msgType}</td>
+            <td style="min-width: 200px;">
+                <div class="campaign-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width:${progress}%"></div>
+                    </div>
+                    <div class="progress-text">${s.sent} / ${total}</div>
+                </div>
+            </td>
+            <td class="text-sm text-muted">${deviceNames || 'Auto-assigned'}</td>
+            <td>
+                <div class="flex gap-2">
+                    ${c.status !== 'draft' ? `<a href="/reports/campaigns/${c._id}" class="btn btn-secondary btn-sm btn-icon" title="View Report"><i class="fas fa-chart-line"></i></a>` : ''}
+                    ${c.status === 'draft' ? `<button class="btn btn-success btn-sm" onclick="startCampaign('${c._id}')"><i class="fas fa-play"></i> Start</button>` : ''}
+                    ${c.status === 'running' ? `<button class="btn btn-warning btn-sm btn-icon" onclick="pauseCampaign('${c._id}')" title="Pause"><i class="fas fa-pause"></i></button>` : ''}
+                    ${c.status === 'paused' ? `<button class="btn btn-success btn-sm btn-icon" onclick="resumeCampaign('${c._id}')" title="Resume"><i class="fas fa-play"></i></button>` : ''}
+                    ${s.failed > 0 && c.status !== 'draft' ? `<button class="btn btn-info btn-sm" onclick="retryCampaign('${c._id}')"><i class="fas fa-redo"></i> Retry Failed</button>` : ''}
+                    ${['running','paused'].includes(c.status) ? `<button class="btn btn-danger btn-sm btn-icon" onclick="stopCampaign('${c._id}')" title="Stop"><i class="fas fa-stop"></i></button>` : ''}
+                    ${c.status === 'draft' ? `<button class="btn btn-danger btn-sm btn-icon" onclick="deleteCampaign('${c._id}')"><i class="fas fa-trash"></i></button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    renderCampaignsPagination(paginationControls, allCampaigns.length);
+}
+
+function renderCampaignsPagination(container, totalItems) {
+    const totalPages = Math.ceil(totalItems / campaignsRowsPerPage);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+    let html = '<div class="pagination">';
+    html += `<button class="btn btn-ghost btn-sm" ${campaignsCurrentPage === 1 ? 'disabled' : ''} onclick="changeCampaignsPage(${campaignsCurrentPage - 1})">Previous</button>`;
+    html += `<span class="page-info">Page ${campaignsCurrentPage} of ${totalPages}</span>`;
+    html += `<button class="btn btn-ghost btn-sm" ${campaignsCurrentPage === totalPages ? 'disabled' : ''} onclick="changeCampaignsPage(${campaignsCurrentPage + 1})">Next</button>`;
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function changeCampaignsPage(page) {
+    campaignsCurrentPage = page;
+    renderCampaignsTable();
+}
+
+// ─── Load Form Data ─────────────────────────────────────
+async function loadFormData() {
+    try {
+        const profiles = await api.get('/api/tuning');
+        const sel = document.getElementById('campProfile');
+        if (profiles.length === 0) {
+            sel.innerHTML = '<option value="">No tuning profiles. Create one in Tuning Profiles page.</option>';
+            sel.disabled = true;
+        } else {
+            sel.innerHTML = profiles.map(p => `<option value="${p._id}">${p.name}</option>`).join('');
+            sel.disabled = false;
+        }
+        const devices = await api.get('/api/devices');
+        allDevices = devices;
+        const devSel = document.getElementById('campDevices');
+        if (devices.length === 0) {
+            devSel.innerHTML = '<option value="">No devices registered yet</option>';
+        } else {
+            devSel.innerHTML = devices.map(d => `<option value="${d.deviceId}">${d.deviceName || d.deviceId} (${d.status})</option>`).join('');
+        }
+    } catch (err) { 
+        console.error('Error loading form data:', err);
+        showToast('Failed to load tuning profiles and devices: ' + err.message, 'error');
+    }
+}
+
+// ─── Create Campaign ────────────────────────────────────
+async function createCampaign() {
+    const name = document.getElementById('campName').value.trim();
+    const recipients = processRecipients();
+    const msgType = document.getElementById('campMsgType').value;
+    
+    // Get text content (used for all types) - enforce 1024 limit
+    let textContent = document.getElementById('campMessage').value.trim();
+    if (textContent.length > MAX_TEXT_LENGTH) {
+        textContent = textContent.substring(0, MAX_TEXT_LENGTH);
+    }
+    
+    if (!name || !recipients.length) {
+        showToast('Please fill in campaign name and recipients', 'warning');
+        return;
+    }
+
+    let messages;
+
+    if (msgType === 'multi_media') {
+        // ═══ MULTI-MEDIA CAMPAIGN ═══
+        if (multiMediaItems.length === 0) {
+            showToast('Please upload at least one media file for multi-media campaign', 'warning');
+            return;
+        }
+        if (!textContent) {
+            showToast('Please enter message text / caption', 'warning');
+            return;
+        }
+
+        // Build mediaItems array for the API
+        const mediaItems = multiMediaItems.map((item, idx) => ({
+            type: item.type,
+            url: item.url,
+            name: item.name,
+            caption: idx === 0 ? textContent : null  // Text attached to first item
+        }));
+
+        messages = [{
+            type: 'multi_media',
+            content: textContent,
+            caption: textContent,
+            mediaUrl: multiMediaItems[0].url,  // First media URL for backward compat
+            mediaName: multiMediaItems[0].name,
+            mediaItems: mediaItems
+        }];
+
+    } else if (msgType === 'text') {
+        // ═══ TEXT ONLY ═══
+        if (!textContent) {
+            showToast('Please enter message content', 'warning');
+            return;
+        }
+        messages = [{
+            type: 'text',
+            content: textContent,
+            mediaUrl: null,
+            mediaName: null,
+            caption: null
+        }];
+
+    } else {
+        // ═══ SINGLE MEDIA (image/pdf/video) ═══
+        let caption = document.getElementById('campCaption') ? document.getElementById('campCaption').value.trim() : '';
+        if (caption.length > MAX_TEXT_LENGTH) {
+            caption = caption.substring(0, MAX_TEXT_LENGTH);
+        }
+        const mediaUrl = document.getElementById('campMediaUrl').value.trim();
+        if (!mediaUrl) {
+            showToast('Please upload a media file for this message type', 'warning');
+            return;
+        }
+        messages = [{
+            type: msgType,
+            content: caption || textContent,
+            mediaUrl: mediaUrl,
+            mediaName: (uploadedMediaData && uploadedMediaData.filename) ? uploadedMediaData.filename : null,
+            caption: caption || textContent || null
+        }];
+    }
+
+    const profileId = document.getElementById('campProfile').value;
+    const deviceSel = document.getElementById('campDevices');
+    const devices = Array.from(deviceSel.selectedOptions).map(o => o.value);
+    const accountType = document.getElementById('campAccountType') ? document.getElementById('campAccountType').value : '';
+
+    const btn = document.getElementById('createCampBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner" style="width:14px;height:14px"></div> Creating...';
+
+    try {
+        await api.post('/api/campaigns', {
+            name,
+            description: '',
+            recipients,
+            messages: messages,
+            tuningProfileId: profileId || null,
+            assignedDevices: devices,
+            accountType: accountType || null,
+        });
+        closeModal('newCampaignModal');
+        showToast('Campaign created successfully!', 'success');
+        resetCampaignForm();
+        loadCampaigns();
+    } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Create Campaign';
+    }
+}
+
+// ─── Reset Form ─────────────────────────────────────────
+function resetCampaignForm() {
+    document.getElementById('campName').value = '';
+    document.getElementById('campRecipients').value = '';
+    document.getElementById('campMessage').value = '';
+    document.getElementById('campMsgType').value = 'text';
+    document.getElementById('campCountryCode').value = '+91';
+    document.getElementById('campMediaFile').value = '';
+    document.getElementById('campMediaUrl').value = '';
+    if (document.getElementById('campCaption')) document.getElementById('campCaption').value = '';
+    uploadedMediaData = null;
+    multiMediaItems = [];
+    document.getElementById('messageContentGroup').style.display = 'block';
+    document.getElementById('messageContentLabel').textContent = 'Message Content *';
+    document.getElementById('messageContentHint').style.display = 'none';
+    document.getElementById('mediaUploadGroup').style.display = 'none';
+    document.getElementById('captionGroup').style.display = 'none';
+    document.getElementById('multiMediaGroup').style.display = 'none';
+    document.getElementById('uploadZone').style.display = 'block';
+    document.getElementById('uploadProgress').style.display = 'none';
+    document.getElementById('uploadResult').style.display = 'none';
+    updateMultiMediaUI();
+    // Reset char counters
+    updateCharCounter('campMessage', 'campMessageCounter');
+    updateCharCounter('campCaption', 'campCaptionCounter');
+}
+
+// ─── View Campaign Details ──────────────────────────────
+async function viewCampaign(id) {
+    try {
+        const c = await api.get(`/api/campaigns/${id}`);
+        document.getElementById('viewCampTitle').textContent = c.name;
+        const msg = (c.messages && c.messages[0]) || {};
+        
+        let mediaSection = '';
+        if (msg.type === 'multi_media' && msg.mediaItems && msg.mediaItems.length > 0) {
+            // Multi-media view
+            const itemsHtml = msg.mediaItems.map((item, idx) => {
+                let preview = '';
+                if (item.type === 'image') {
+                    preview = `<img src="${item.url}" style="max-width:80px;max-height:60px;border-radius:4px;object-fit:cover">`;
+                } else if (item.type === 'pdf') {
+                    preview = '<i class="fas fa-file-pdf" style="font-size:24px;color:var(--accent-red)"></i>';
+                } else if (item.type === 'video') {
+                    preview = '<i class="fas fa-file-video" style="font-size:24px;color:var(--accent-blue)"></i>';
+                }
+                return `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:6px">
+                    <span style="font-weight:700;color:var(--accent-primary);width:20px">${idx+1}</span>
+                    <div style="width:50px;display:flex;align-items:center;justify-content:center">${preview}</div>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:500;color:var(--text-primary)">${item.name || 'Media ' + (idx+1)}</div>
+                        <div style="font-size:11px;color:var(--text-muted)">${item.type.toUpperCase()}${idx === 0 ? ' (text attached)' : ''}</div>
+                    </div>
+                    <a href="${item.url}" target="_blank" class="btn btn-ghost btn-sm"><i class="fas fa-external-link-alt"></i></a>
+                </div>`;
+            }).join('');
+            mediaSection = `
+            <div>
+                <label class="text-sm text-muted">Media Items (${msg.mediaItems.length})</label>
+                <div style="margin-top:6px">${itemsHtml}</div>
+            </div>`;
+        } else if (msg.mediaUrl) {
+            // Single media view
+            const mediaPreview = msg.type === 'image' ? `<img src="${msg.mediaUrl}" style="max-width:200px;border-radius:8px;margin-top:8px">` :
+                msg.type === 'pdf' ? `<a href="${msg.mediaUrl}" target="_blank" class="btn btn-ghost btn-sm"><i class="fas fa-file-pdf"></i> View PDF</a>` :
+                `<a href="${msg.mediaUrl}" target="_blank" class="btn btn-ghost btn-sm"><i class="fas fa-file"></i> View Media</a>`;
+            mediaSection = `
+            <div>
+                <label class="text-sm text-muted">Media</label>
+                <div style="margin-top:4px">
+                    <div class="url-copy-box" style="margin-bottom:8px">
+                        <input type="text" class="form-control" value="${msg.mediaUrl}" readonly style="font-family:monospace;font-size:12px;background:var(--bg-primary)">
+                        <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${msg.mediaUrl}');showToast('Copied!','success')"><i class="fas fa-copy"></i></button>
+                    </div>
+                    ${mediaPreview}
+                </div>
+            </div>`;
+        }
+
+        const typeLabels = { text: 'Text Only', image: 'Image + Caption', pdf: 'PDF Document', video: 'Video', multi_media: 'Multi-Media' };
+
+        document.getElementById('viewCampBody').innerHTML = `
+            <div style="display:grid;gap:16px">
+                <div>
+                    <label class="text-sm text-muted">Status</label>
+                    <div style="margin-top:4px">${statusBadge(c.status)}</div>
+                </div>
+                <div>
+                    <label class="text-sm text-muted">Message Type</label>
+                    <p style="margin-top:4px">${typeLabels[msg.type] || msg.type || 'text'}</p>
+                </div>
+                <div>
+                    <label class="text-sm text-muted">${msg.type === 'text' ? 'Message Content' : 'Caption / Text'}</label>
+                    <div style="margin-top:4px;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);white-space:pre-wrap;font-size:13px">${msg.content || msg.caption || '—'}</div>
+                </div>
+                ${mediaSection}
+                <div>
+                    <label class="text-sm text-muted">Recipients (${(c.recipients || []).length})</label>
+                    <div style="margin-top:4px;max-height:120px;overflow-y:auto;padding:8px;background:var(--bg-input);border-radius:var(--radius-sm);font-family:monospace;font-size:12px">${(c.recipients || []).join('<br>')}</div>
+                </div>
+                <div>
+                    <label class="text-sm text-muted">Assigned Devices</label>
+                    <div class="chip-list" style="margin-top:4px">${(c.assignedDevices || []).map(d => `<span class="chip">${d}</span>`).join('') || '<span class="text-muted">Auto-assign (all online)</span>'}</div>
+                </div>
+                <div>
+                    <label class="text-sm text-muted">Created</label>
+                    <p style="margin-top:4px">${formatDate(c.createdAt)}</p>
+                </div>
+            </div>
+        `;
+        openModal('viewCampaignModal');
+    } catch (err) {
+        showToast('Failed to load campaign: ' + err.message, 'error');
+    }
+}
+
+// ─── Campaign Actions ────────────────────────────────
+async function startCampaign(id) {
+    if (!confirmAction('Start this campaign? Tasks will be distributed to devices.')) return;
+    try {
+        const res = await api.post(`/api/campaigns/${id}/start`);
+        showToast(`Campaign started! ${res.tasksCreated} tasks created across ${res.devicesAssigned} devices.`, 'success');
+        loadCampaigns();
+    } catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function pauseCampaign(id) {
+    try { await api.post(`/api/campaigns/${id}/pause`); showToast('Campaign paused', 'info'); loadCampaigns(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function resumeCampaign(id) {
+    try { await api.post(`/api/campaigns/${id}/resume`); showToast('Campaign resumed', 'success'); loadCampaigns(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function stopCampaign(id) {
+    if (!confirmAction('Stop this campaign? Pending tasks will be cancelled.')) return;
+    try { await api.post(`/api/campaigns/${id}/stop`); showToast('Campaign stopped', 'warning'); loadCampaigns(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function deleteCampaign(id) {
+    if (!confirmAction('Delete this campaign permanently?')) return;
+    try { await api.del(`/api/campaigns/${id}`); showToast('Campaign deleted', 'success'); loadCampaigns(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function retryCampaign(id) {
+    if (!confirmAction('Retry all failed tasks for this campaign?')) return;
+    try {
+        const res = await api.post(`/api/campaigns/${id}/retry`);
+        showToast(`${res.retriedTasks} tasks have been re-queued for sending.`, 'success');
+        loadCampaigns();
+    } catch (err) {
+        showToast('Failed to retry campaign: ' + err.message, 'error');
+    }
+}
+
+function exportCampaignsCSV() {
+    if (allCampaigns.length === 0) { showToast('No campaigns to export', 'info'); return; }
+    const headers = ['ID', 'Name', 'Status', 'Type', 'Sent', 'Failed', 'Pending', 'Created At'];
+    const rows = allCampaigns.map(c => {
+        const s = c.stats || { sent: 0, failed: 0, pending: 0 };
+        const msgType = (c.messages && c.messages[0]) ? c.messages[0].type : 'text';
+        return [c._id, `"${c.name}"`, c.status, msgType, s.sent, s.failed, s.pending, c.createdAt].join(',');
+    });
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "campaigns.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// ─── Init ───────────────────────────────────────────────
+loadCampaigns();
+loadFormData();
+
+// Initialize character counter enforcement
+enforceMaxLength('campMessage', 'campMessageCounter');
+enforceMaxLength('campCaption', 'campCaptionCounter');
+</script>
+{% endblock %}

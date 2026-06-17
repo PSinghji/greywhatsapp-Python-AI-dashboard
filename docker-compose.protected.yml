@@ -1,0 +1,42 @@
+version: '3.8'
+
+# ═══════════════════════════════════════════════════════════════
+# PROTECTED PRODUCTION DEPLOYMENT
+# Uses Dockerfile.protected which compiles and obfuscates code
+# The running container has NO readable Python source code
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.protected
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URL=mongodb://mongo:27017
+      - DB_NAME=wa_campaign
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    command: mongod --quiet --logpath /dev/null
+
+volumes:
+  mongo_data:
+  uploads_data:

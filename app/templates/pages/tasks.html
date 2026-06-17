@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Tasks - WA Campaign{% endblock %}
+{% block nav_tasks %}active{% endblock %}
+{% block page_title %}Task Queue{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-ghost btn-sm" onclick="exportTasks()"><i class="fas fa-file-csv"></i> Export CSV</button>
+<button class="btn btn-ghost btn-sm" onclick="loadTasks()"><i class="fas fa-sync-alt"></i> Refresh</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stats -->
+<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.75rem;margin-bottom:1rem;">
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">Total</div>
+        <div id="statTotal" style="font-size:1.25rem;font-weight:700;">-</div>
+    </div>
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">Pending</div>
+        <div id="statPending" style="font-size:1.25rem;font-weight:700;color:var(--text-muted);">-</div>
+    </div>
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">In Progress</div>
+        <div id="statInProgress" style="font-size:1.25rem;font-weight:700;color:var(--accent-blue, #3b82f6);">-</div>
+    </div>
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">Completed</div>
+        <div id="statCompleted" style="font-size:1.25rem;font-weight:700;color:var(--accent-green);">-</div>
+    </div>
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">Failed</div>
+        <div id="statFailed" style="font-size:1.25rem;font-weight:700;color:var(--accent-red);">-</div>
+    </div>
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">Invalid #</div>
+        <div id="statInvalid" style="font-size:1.25rem;font-weight:700;color:var(--accent-yellow, #f59e0b);">-</div>
+    </div>
+    <div class="card" style="padding:0.75rem;text-align:center;">
+        <div class="text-xs text-muted">Restricted</div>
+        <div id="statRestricted" style="font-size:1.25rem;font-weight:700;color:var(--accent-orange, #f97316);">-</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom:1rem;">
+    <div class="card-body" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+        <select id="filterStatus" class="form-control" style="width:auto;min-width:150px;" onchange="loadTasks()">
+            <option value="">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="assigned">Assigned</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="invalid_number">Invalid Number</option>
+            <option value="account_restricted">Restricted</option>
+        </select>
+        <select id="filterDevice" class="form-control" style="width:auto;min-width:180px;" onchange="loadTasks()">
+            <option value="">All Devices</option>
+        </select>
+        <input type="text" id="filterSearch" class="form-control" placeholder="Search recipient..." style="width:auto;min-width:200px;">
+        <button class="btn btn-primary btn-sm" onclick="loadTasks()"><i class="fas fa-search"></i> Search</button>
+        <span class="text-sm text-muted" id="taskCount"></span>
+    </div>
+</div>
+
+<!-- Table -->
+<div class="card">
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Recipient</th>
+                        <th>Campaign</th>
+                        <th>Status</th>
+                        <th>Device Name</th>
+                        <th>Device Phone</th>
+                        <th>Error/Reason</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="taskTable">
+                    <tr><td colspan="9" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="paginationControls"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let allDevices = [];
+    let currentSkip = 0;
+    const pageSize = 50;
+
+    async function loadDevices() {
+        try {
+            const devices = await api.get('/api/devices');
+            allDevices = devices;
+            const select = document.getElementById('filterDevice');
+            select.innerHTML = '<option value="">All Devices</option>';
+            devices.forEach(d => {
+                const name = d.deviceName || d.deviceId;
+                select.innerHTML += `<option value="${d.deviceId}">${name}</option>`;
+            });
+        } catch (err) {
+            console.error('Failed to load devices:', err);
+        }
+    }
+
+    async function loadStats() {
+        try {
+            const stats = await api.get('/api/tasks/stats');
+            document.getElementById('statTotal').textContent = stats.total || 0;
+            document.getElementById('statPending').textContent = (stats.pending || 0) + (stats.assigned || 0);
+            document.getElementById('statInProgress').textContent = stats.inProgress || 0;
+            document.getElementById('statCompleted').textContent = stats.completed || 0;
+            document.getElementById('statFailed').textContent = stats.failed || 0;
+            document.getElementById('statInvalid').textContent = stats.invalidNumber || 0;
+            document.getElementById('statRestricted').textContent = stats.accountRestricted || 0;
+        } catch (err) {
+            console.error('Failed to load stats:', err);
+        }
+    }
+
+    async function loadTasks(skip = 0) {
+        currentSkip = skip;
+        const status = document.getElementById('filterStatus').value;
+        const deviceId = document.getElementById('filterDevice').value;
+        const search = document.getElementById('filterSearch').value.trim();
+
+        let url = `/api/tasks?skip=${skip}&limit=${pageSize}`;
+        if (status) url += `&status=${status}`;
+        if (deviceId) url += `&device_id=${deviceId}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+
+        try {
+            const result = await api.get(url);
+            const tasks = result.tasks || [];
+            const total = result.total || 0;
+
+            document.getElementById('taskCount').textContent = `${total} tasks found`;
+
+            const tbody = document.getElementById('taskTable');
+            if (tasks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><i class="fas fa-tasks"></i><p>No tasks found.</p></td></tr>';
+                document.getElementById('paginationControls').innerHTML = '';
+                return;
+            }
+
+            tbody.innerHTML = tasks.map((t, idx) => {
+                const rowNum = skip + idx + 1;
+                const errorReason = t.failureReason || t.errorMessage || '';
+                let errorStyle = '';
+                if (t.status === 'failed') errorStyle = 'color:var(--accent-red)';
+                else if (t.status === 'invalid_number') errorStyle = 'color:var(--accent-yellow, #f59e0b)';
+                else if (t.status === 'account_restricted') errorStyle = 'color:var(--accent-orange, #f97316)';
+
+                const canRetry = t.status === 'failed';
+                const canDelete = ['failed', 'invalid_number', 'completed'].includes(t.status);
+
+                return `
+                    <tr>
+                        <td>${rowNum}</td>
+                        <td><strong>${t.recipient || 'N/A'}</strong></td>
+                        <td class="text-sm">${t.campaignName || '-'}</td>
+                        <td>${statusBadge(t.status)}</td>
+                        <td>${t.deviceName || t.deviceId || 'N/A'}</td>
+                        <td class="text-sm">${t.devicePhone || '-'}</td>
+                        <td class="text-sm" style="max-width:200px;${errorStyle}" title="${errorReason}">${errorReason ? (errorReason.length > 40 ? errorReason.substring(0, 40) + '...' : errorReason) : ''}</td>
+                        <td class="text-sm">${t.updatedAt ? formatDate(t.updatedAt) : '-'}</td>
+                        <td>
+                            <div style="display:flex;gap:0.25rem;">
+                                ${canRetry ? `<button class="btn btn-ghost btn-sm" onclick="retryTask('${t._id}')" title="Retry"><i class="fas fa-redo"></i></button>` : ''}
+                                ${canDelete ? `<button class="btn btn-ghost btn-sm" onclick="deleteTask('${t._id}')" title="Delete"><i class="fas fa-trash"></i></button>` : ''}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            // Pagination
+            const totalPages = Math.ceil(total / pageSize);
+            const currentPage = Math.floor(skip / pageSize) + 1;
+            const paginationControls = document.getElementById('paginationControls');
+            if (totalPages <= 1) {
+                paginationControls.innerHTML = '';
+                return;
+            }
+            let html = '<div class="pagination" style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-top:1rem;">';
+            html += `<button class="btn btn-ghost btn-sm" ${currentPage === 1 ? 'disabled' : ''} onclick="loadTasks(${(currentPage - 2) * pageSize})">Previous</button>`;
+            html += `<span class="page-info">Page ${currentPage} of ${totalPages}</span>`;
+            html += `<button class="btn btn-ghost btn-sm" ${currentPage === totalPages ? 'disabled' : ''} onclick="loadTasks(${currentPage * pageSize})">Next</button>`;
+            html += '</div>';
+            paginationControls.innerHTML = html;
+
+        } catch (err) {
+            showToast('Failed to load tasks: ' + err.message, 'error');
+        }
+
+        loadStats();
+    }
+
+    async function retryTask(taskId) {
+        if (!confirm('Retry this task?')) return;
+        try {
+            await api.post(`/api/tasks/${taskId}/retry`);
+            showToast('Task queued for retry', 'success');
+            loadTasks(currentSkip);
+        } catch (err) {
+            showToast('Failed to retry: ' + err.message, 'error');
+        }
+    }
+
+    async function deleteTask(taskId) {
+        if (!confirm('Delete this task permanently?')) return;
+        try {
+            await api.delete(`/api/tasks/${taskId}`);
+            showToast('Task deleted', 'success');
+            loadTasks(currentSkip);
+        } catch (err) {
+            showToast('Failed to delete: ' + err.message, 'error');
+        }
+    }
+
+    async function exportTasks() {
+        const status = document.getElementById('filterStatus').value;
+        const deviceId = document.getElementById('filterDevice').value;
+        let url = '/api/tasks/export?';
+        if (status) url += `status=${status}&`;
+        if (deviceId) url += `device_id=${deviceId}&`;
+        window.location.href = url;
+    }
+
+    // Init
+    loadDevices();
+    loadTasks();
+</script>
+{% endblock %}

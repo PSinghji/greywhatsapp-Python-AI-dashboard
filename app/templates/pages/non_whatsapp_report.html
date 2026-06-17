@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Non-WhatsApp Numbers Report - WA Campaign{% endblock %}
+{% block nav_reports %}active{% endblock %}
+{% block page_title %}Non-WhatsApp Numbers Report{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-ghost btn-sm" onclick="exportCSV()"><i class="fas fa-file-csv"></i> Export CSV</button>
+<button class="btn btn-ghost btn-sm" onclick="loadData()"><i class="fas fa-sync-alt"></i> Refresh</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stats -->
+<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.75rem;margin-bottom:1rem;">
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Total Invalid Numbers</div>
+        <div id="statTotal" style="font-size:1.5rem;font-weight:700;color:var(--accent-yellow, #f59e0b);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Unique Numbers</div>
+        <div id="statUnique" style="font-size:1.5rem;font-weight:700;color:var(--text-primary);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Campaigns Affected</div>
+        <div id="statCampaigns" style="font-size:1.5rem;font-weight:700;color:var(--accent-blue, #3b82f6);">-</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom:1rem;">
+    <div class="card-body" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+        <select id="filterCampaign" class="form-control" style="width:auto;min-width:200px;" onchange="applyFilters()">
+            <option value="">All Campaigns</option>
+        </select>
+        <select id="filterDevice" class="form-control" style="width:auto;min-width:180px;" onchange="applyFilters()">
+            <option value="">All Devices</option>
+        </select>
+        <input type="text" id="filterSearch" class="form-control" placeholder="Search number..." style="width:auto;min-width:200px;" oninput="applyFilters()">
+        <span class="text-sm text-muted" id="filterCount"></span>
+    </div>
+</div>
+
+<!-- Table -->
+<div class="card">
+    <div class="card-header">
+        <h3>Invalid Numbers</h3>
+        <span class="text-sm text-muted" id="reportCount">Loading...</span>
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Phone Number</th>
+                        <th>Campaign Name</th>
+                        <th>Device Name</th>
+                        <th>Device Phone</th>
+                        <th>Error Reason</th>
+                        <th>Detected At</th>
+                    </tr>
+                </thead>
+                <tbody id="reportTable">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="paginationControls"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let allData = [];
+    let filteredData = [];
+    let currentPage = 1;
+    const rowsPerPage = 25;
+
+    async function loadData() {
+        try {
+            const result = await api.get('/api/tasks?status=invalid_number&limit=50000');
+            allData = result.tasks || [];
+            
+            // Stats
+            document.getElementById('statTotal').textContent = allData.length;
+            const uniqueNumbers = new Set(allData.map(t => t.recipient));
+            document.getElementById('statUnique').textContent = uniqueNumbers.size;
+            const uniqueCampaigns = new Set(allData.map(t => t.campaignName || t.campaignId).filter(Boolean));
+            document.getElementById('statCampaigns').textContent = uniqueCampaigns.size;
+
+            // Build campaign filter
+            const campaignSelect = document.getElementById('filterCampaign');
+            campaignSelect.innerHTML = '<option value="">All Campaigns</option>';
+            const campaignMap = new Map();
+            allData.forEach(t => {
+                const cName = t.campaignName || t.campaignId || '';
+                if (cName && !campaignMap.has(cName)) campaignMap.set(cName, cName);
+            });
+            campaignMap.forEach((name) => {
+                campaignSelect.innerHTML += `<option value="${name}">${name}</option>`;
+            });
+
+            // Build device filter
+            const deviceSelect = document.getElementById('filterDevice');
+            deviceSelect.innerHTML = '<option value="">All Devices</option>';
+            const deviceSet = new Map();
+            allData.forEach(t => {
+                const dName = t.deviceName || t.deviceId || '';
+                const dId = t.deviceId || '';
+                if (dId && !deviceSet.has(dId)) deviceSet.set(dId, dName);
+            });
+            deviceSet.forEach((name, id) => {
+                deviceSelect.innerHTML += `<option value="${id}">${name}</option>`;
+            });
+
+            document.getElementById('reportCount').textContent = `${allData.length} records`;
+            applyFilters();
+        } catch (err) {
+            showToast('Failed to load data: ' + err.message, 'error');
+            document.getElementById('reportTable').innerHTML = `<tr><td colspan="7" class="empty-state error"><i class="fas fa-exclamation-triangle"></i><p>${err.message}</p></td></tr>`;
+        }
+    }
+
+    function applyFilters() {
+        const campaignFilter = document.getElementById('filterCampaign').value;
+        const deviceFilter = document.getElementById('filterDevice').value;
+        const searchFilter = document.getElementById('filterSearch').value.toLowerCase().trim();
+
+        filteredData = allData.filter(t => {
+            if (campaignFilter) {
+                const cName = t.campaignName || t.campaignId || '';
+                if (cName !== campaignFilter) return false;
+            }
+            if (deviceFilter && t.deviceId !== deviceFilter) return false;
+            if (searchFilter && !(t.recipient || '').toLowerCase().includes(searchFilter)) return false;
+            return true;
+        });
+
+        document.getElementById('filterCount').textContent = `Showing ${filteredData.length} of ${allData.length}`;
+        currentPage = 1;
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('reportTable');
+        const paginationControls = document.getElementById('paginationControls');
+
+        if (filteredData.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><i class="fas fa-check-circle"></i><p>No invalid numbers found.</p></td></tr>';
+            paginationControls.innerHTML = '';
+            return;
+        }
+
+        const start = (currentPage - 1) * rowsPerPage;
+        const end = start + rowsPerPage;
+        const page = filteredData.slice(start, end);
+
+        tbody.innerHTML = page.map((t, idx) => {
+            const rowNum = start + idx + 1;
+            const errorReason = t.failureReason || t.errorMessage || 'Non-WhatsApp number';
+            return `
+                <tr>
+                    <td>${rowNum}</td>
+                    <td><strong>${t.recipient || 'N/A'}</strong></td>
+                    <td>${t.campaignName || t.campaignId || 'N/A'}</td>
+                    <td>${t.deviceName || t.deviceId || 'N/A'}</td>
+                    <td>${t.devicePhone || '-'}</td>
+                    <td class="text-sm" style="color:var(--accent-yellow, #f59e0b);max-width:250px;" title="${errorReason}">${errorReason.length > 50 ? errorReason.substring(0, 50) + '...' : errorReason}</td>
+                    <td class="text-sm">${t.updatedAt ? formatDate(t.updatedAt) : '-'}</td>
+                </tr>
+            `;
+        }).join('');
+
+        // Pagination
+        const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+        if (totalPages <= 1) {
+            paginationControls.innerHTML = '';
+            return;
+        }
+        let html = '<div class="pagination" style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-top:1rem;">';
+        html += `<button class="btn btn-ghost btn-sm" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">Previous</button>`;
+        html += `<span class="page-info">Page ${currentPage} of ${totalPages}</span>`;
+        html += `<button class="btn btn-ghost btn-sm" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Next</button>`;
+        html += '</div>';
+        paginationControls.innerHTML = html;
+    }
+
+    function changePage(page) {
+        currentPage = page;
+        renderTable();
+    }
+
+    function exportCSV() {
+        const data = filteredData.length > 0 ? filteredData : allData;
+        if (data.length === 0) { showToast('No data to export', 'info'); return; }
+        const headers = ['#', 'Phone Number', 'Campaign Name', 'Device ID', 'Device Name', 'Device Phone', 'Error Reason', 'Detected At'];
+        const rows = data.map((t, idx) => [
+            idx + 1,
+            t.recipient || '',
+            t.campaignName || t.campaignId || '',
+            t.deviceId || '',
+            t.deviceName || '',
+            t.devicePhone || '',
+            `"${(t.failureReason || t.errorMessage || 'Non-WhatsApp number').replace(/"/g, '""')}"`,
+            t.updatedAt || ''
+        ].join(','));
+        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
+        const link = document.createElement("a");
+        link.setAttribute("href", encodeURI(csvContent));
+        link.setAttribute("download", `non_whatsapp_numbers_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    loadData();
+</script>
+{% endblock %}

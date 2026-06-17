@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}WA Campaign Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>WA Campaign</span>
+                </div>
+                <button class="sidebar-toggle" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item {% block nav_dashboard %}{% endblock %}" data-page="dashboard">
+                    <i class="fas fa-th-large"></i><span>Dashboard</span>
+                </a>
+                <a href="/devices" class="nav-item {% block nav_devices %}{% endblock %}" data-page="devices">
+                    <i class="fas fa-mobile-alt"></i><span>Devices</span>
+                </a>
+                <a href="/campaigns" class="nav-item {% block nav_campaigns %}{% endblock %}" data-page="campaigns">
+                    <i class="fas fa-bullhorn"></i><span>Campaigns</span>
+                </a>
+                <a href="/distribution" class="nav-item {% block nav_distribution %}{% endblock %}" data-page="distribution">
+                    <i class="fas fa-sitemap"></i><span>Distribution</span>
+                </a>
+                <a href="/tasks" class="nav-item {% block nav_tasks %}{% endblock %}" data-page="tasks">
+                    <i class="fas fa-tasks"></i><span>Task Queue</span>
+                </a>
+                <a href="/tuning" class="nav-item {% block nav_tuning %}{% endblock %}" data-page="tuning">
+                    <i class="fas fa-sliders-h"></i><span>Tuning Profiles</span>
+                </a>
+
+                <div class="nav-section-label" style="padding: 0.5rem 1rem; font-size: 0.65rem; text-transform: uppercase; color: rgba(255,255,255,0.35); letter-spacing: 0.1em; margin-top: 0.5rem;">Reports</div>
+
+                <a href="/analytics" class="nav-item {% block nav_analytics %}{% endblock %}" data-page="analytics">
+                    <i class="fas fa-chart-bar"></i><span>Analytics</span>
+                </a>
+                <a href="/reports/daily" class="nav-item {% block nav_daily_reports %}{% endblock %}" data-page="daily_reports">
+                    <i class="fas fa-calendar-day"></i><span>Daily Reports</span>
+                </a>
+                <a href="/reports/non-whatsapp" class="nav-item {% block nav_reports %}{% endblock %}" data-page="reports">
+                    <i class="fas fa-user-slash"></i><span>Non-WhatsApp Report</span>
+                </a>
+                <a href="/reports/campaigns" class="nav-item {% block nav_campaign_reports %}{% endblock %}" data-page="campaign_reports">
+                    <i class="fas fa-chart-pie"></i><span>Campaign Report</span>
+                </a>
+
+                <div class="nav-section-label" style="padding: 0.5rem 1rem; font-size: 0.65rem; text-transform: uppercase; color: rgba(255,255,255,0.35); letter-spacing: 0.1em; margin-top: 0.5rem;">System</div>
+
+                <a href="/device-communication" class="nav-item {% block nav_device_comm %}{% endblock %}" data-page="device_comm">
+                    <i class="fas fa-comments"></i><span>Device Communication</span>
+                </a>
+                <a href="/media" class="nav-item {% block nav_media %}{% endblock %}" data-page="media">
+                    <i class="fas fa-photo-video"></i><span>Media</span>
+                </a>
+                <a href="/api-keys" class="nav-item {% block nav_apikeys %}{% endblock %}" data-page="apikeys">
+                    <i class="fas fa-key"></i><span>API Keys</span>
+                </a>
+                <a href="/activity-logs" class="nav-item {% block nav_logs %}{% endblock %}" data-page="logs">
+                    <i class="fas fa-clipboard-list"></i><span>Activity Logs</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="server-status" id="serverStatus">
+                    <span class="status-dot online"></span>
+                    <span>Server Online</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-bar">
+                <button class="mobile-toggle" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+                <div class="top-bar-actions">
+                    {% block top_actions %}{% endblock %}
+                </div>
+            </header>
+            <div class="content-area">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

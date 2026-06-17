@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Campaign Reports{% endblock %}
+{% block page_title %}Campaign Reports{% endblock %}
+{% block nav_campaign_reports %}active{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-ghost btn-sm" onclick="loadCampaignReports()"><i class="fas fa-sync-alt"></i> Refresh</button>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Campaign</th>
+                        <th>Account Type</th>
+                        <th>Status</th>
+                        <th>Sent</th>
+                        <th>Failed</th>
+                        <th>Invalid</th>
+                        <th>Pending</th>
+                        <th>Progress</th>
+                        <th>Devices</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="campaignReportsTable">
+                    <tr><td colspan="11" class="text-center text-muted"><div class="spinner" style="margin:0 auto"></div> Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allDevicesMap = {};
+
+async function loadCampaignReports() {
+    try {
+        // Load devices for name lookup
+        const devices = await api.get('/api/devices');
+        devices.forEach(d => { allDevicesMap[d.deviceId] = d.deviceName || d.deviceId; });
+
+        const campaigns = await api.get('/api/campaigns');
+        const tbody = document.getElementById('campaignReportsTable');
+
+        if (campaigns.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><i class="fas fa-chart-line"></i><p>No campaigns found. Create a campaign first.</p></td></tr>';
+            return;
+        }
+
+        // Filter to only show non-draft campaigns
+        const reportCampaigns = campaigns.filter(c => c.status !== 'draft');
+        if (reportCampaigns.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><i class="fas fa-chart-line"></i><p>No active campaigns yet. Start a campaign to see reports.</p></td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = reportCampaigns.map(c => {
+            const s = c.stats || { sent: 0, failed: 0, pending: 0, invalid: 0, restricted: 0 };
+            const total = s.sent + s.failed + s.pending + (s.invalid || 0) + (s.restricted || 0);
+            const progress = total > 0 ? Math.round((s.sent / total) * 100) : 0;
+            const accountType = c.accountType || 'personal';
+            const accountBadge = accountType === 'business'
+                ? '<span class="badge badge-running" style="font-size:10px">Business</span>'
+                : '<span class="badge badge-completed" style="font-size:10px">Personal</span>';
+
+            const deviceNames = (c.assignedDevices || []).map(did => allDevicesMap[did] || did.substring(0, 12)).join(', ');
+
+            return `
+            <tr>
+                <td><strong style="color:var(--text-primary)">${c.name}</strong></td>
+                <td>${accountBadge}</td>
+                <td>${statusBadge(c.status)}</td>
+                <td style="color:var(--accent-green);font-weight:600">${s.sent}</td>
+                <td style="color:var(--accent-red);font-weight:600">${s.failed}</td>
+                <td style="color:var(--accent-yellow, #ffc107);font-weight:600">${s.invalid || 0}</td>
+                <td>${s.pending}</td>
+                <td style="min-width:150px">
+                    <div class="campaign-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width:${progress}%"></div>
+                        </div>
+                        <div class="progress-text">${progress}%</div>
+                    </div>
+                </td>
+                <td class="text-sm text-muted">${deviceNames || 'Auto'}</td>
+                <td class="text-sm text-muted" style="white-space:nowrap">${formatDate(c.createdAt)}</td>
+                <td>
+                    <a href="/reports/campaigns/${c._id}" class="btn btn-primary btn-sm"><i class="fas fa-chart-line"></i> View Report</a>
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        document.getElementById('campaignReportsTable').innerHTML = `<tr><td colspan="11" class="text-center" style="color:var(--accent-red)"><i class="fas fa-exclamation-triangle"></i> Failed: ${err.message}</td></tr>`;
+    }
+}
+
+loadCampaignReports();
+</script>
+{% endblock %}

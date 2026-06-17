@@ -1,0 +1,123 @@
+name: Build Protected & Deploy to Client Server
+
+# ═══════════════════════════════════════════════════════════════
+# This workflow:
+#   1. Triggers on push to 'main' branch
+#   2. Builds a Docker image using Dockerfile.protected
+#      (PyArmor obfuscation + Cython compilation inside Docker)
+#   3. Pushes the protected image to GitHub Container Registry
+#   4. SSHs into your client server and pulls + restarts the container
+#
+# The client server NEVER sees your source code — only the
+# compiled Docker image with .so binaries and obfuscated Python.
+# ═══════════════════════════════════════════════════════════════
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ─── Job 1: Build Protected Docker Image ──────────────────
+  build:
+    name: Build Protected Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest
+
+      - name: Build and push protected Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.protected
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Image build summary
+        run: |
+          echo "✅ Protected Docker image built and pushed"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo ""
+          echo "This image contains:"
+          echo "  - Cython compiled .so binaries (unreadable)"
+          echo "  - PyArmor obfuscated entry point"
+          echo "  - NO original Python source code"
+
+  # ─── Job 2: Deploy to Client Server ───────────────────────
+  deploy:
+    name: Deploy to Client Server
+    needs: build
+    runs-on: ubuntu-latest
+    # Only deploy on main branch pushes (not PRs)
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "═══════════════════════════════════════════"
+            echo "  Deploying WhatsApp Campaign Dashboard"
+            echo "═══════════════════════════════════════════"
+
+            # Login to GitHub Container Registry
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull the latest protected image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # Stop existing container (if running)
+            docker stop wa-dashboard 2>/dev/null || true
+            docker rm wa-dashboard 2>/dev/null || true
+
+            # Start new container
+            docker run -d \
+              --name wa-dashboard \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              -e MONGO_URL=mongodb://host.docker.internal:27017 \
+              -e DB_NAME=wa_campaign \
+              -v wa-uploads:/app/uploads \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # Wait and verify
+            sleep 5
+            if curl -sf http://localhost:8000/api/agent/health > /dev/null; then
+              echo "✅ Dashboard deployed successfully!"
+            else
+              echo "⚠️  Dashboard may still be starting..."
+              docker logs wa-dashboard --tail 20
+            fi
+
+            # Cleanup old images
+            docker image prune -f

@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Media - WA Campaign{% endblock %}
+{% block nav_media %}active{% endblock %}
+{% block page_title %}Media Library{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-primary btn-sm" onclick="openModal('uploadModal')"><i class="fas fa-upload"></i> Upload</button>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Preview</th><th>Filename</th><th>Type</th><th>Size</th><th>Public URL</th><th>Uploaded</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="mediaTable">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal-overlay" id="uploadModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Upload Media</h3>
+            <button class="modal-close" onclick="closeModal('uploadModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>File (Image, PDF, Video) *</label>
+                <div class="upload-zone" id="mediaUploadZone" onclick="document.getElementById('mediaFile').click()">
+                    <input type="file" class="form-control" id="mediaFile" accept="image/*,.pdf,video/mp4" style="display:none" onchange="onMediaFileSelected(this)">
+                    <div class="upload-zone-inner">
+                        <i class="fas fa-cloud-upload-alt" style="font-size:28px;color:var(--accent-primary);margin-bottom:6px"></i>
+                        <p style="font-size:13px;color:var(--text-primary)">Click to select or drag & drop</p>
+                        <p style="font-size:11px;color:var(--text-muted);margin-top:2px">JPG, PNG, GIF, PDF, MP4 — Max 50MB</p>
+                    </div>
+                </div>
+                <div id="mediaFileSelected" style="display:none;margin-top:8px;padding:10px;background:var(--bg-input);border-radius:var(--radius-sm);border:1px solid var(--border-color)">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-file" id="selectedFileIcon" style="color:var(--accent-primary)"></i>
+                            <span id="selectedFileName" style="font-size:13px"></span>
+                            <span id="selectedFileSize" style="font-size:11px;color:var(--text-muted)"></span>
+                        </div>
+                        <button class="btn btn-ghost btn-sm btn-icon" onclick="clearMediaFile()"><i class="fas fa-times"></i></button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Campaign (optional)</label>
+                <select class="form-control" id="mediaCampaign">
+                    <option value="">No campaign</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" class="form-control" id="mediaDesc" placeholder="Promo banner image">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('uploadModal')">Cancel</button>
+            <button class="btn btn-primary" id="uploadBtn" onclick="uploadMedia()">Upload & Generate URL</button>
+        </div>
+    </div>
+</div>
+
+<!-- URL Display Modal -->
+<div class="modal-overlay" id="urlModal">
+    <div class="modal" style="max-width:550px">
+        <div class="modal-header">
+            <h3><i class="fas fa-check-circle" style="color:var(--accent-green);margin-right:6px"></i> Media Uploaded</h3>
+            <button class="modal-close" onclick="closeModal('urlModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="text-align:center;margin-bottom:16px">
+                <div id="urlModalPreview" style="display:inline-block;margin-bottom:12px"></div>
+            </div>
+            <div class="form-group">
+                <label>Public Media URL</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                    <input type="text" class="form-control" id="generatedUrl" readonly style="font-family:monospace;font-size:12px;background:var(--bg-primary)">
+                    <button class="btn btn-primary btn-sm" onclick="copyGeneratedUrl()"><i class="fas fa-copy"></i> Copy</button>
+                </div>
+                <p style="font-size:11px;color:var(--text-muted);margin-top:6px">This URL can be used in campaigns. Agents will download media from this URL automatically.</p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('urlModal')">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: var(--transition);
+    background: var(--bg-input);
+}
+.upload-zone:hover { border-color: var(--accent-primary); background: rgba(99,102,241,0.05); }
+.upload-zone-inner { pointer-events: none; }
+.url-cell {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 250px;
+}
+.url-cell input {
+    flex: 1;
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: monospace;
+    font-size: 11px;
+    min-width: 0;
+}
+.url-cell button {
+    flex-shrink: 0;
+}
+</style>
+
+<script>
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function onMediaFileSelected(input) {
+    if (!input.files || !input.files.length) return;
+    const file = input.files[0];
+    document.getElementById('mediaUploadZone').style.display = 'none';
+    document.getElementById('mediaFileSelected').style.display = 'block';
+    document.getElementById('selectedFileName').textContent = file.name;
+    document.getElementById('selectedFileSize').textContent = '(' + formatSize(file.size) + ')';
+    const icon = document.getElementById('selectedFileIcon');
+    if (file.type.startsWith('image/')) icon.className = 'fas fa-image';
+    else if (file.type === 'application/pdf') icon.className = 'fas fa-file-pdf';
+    else icon.className = 'fas fa-file-video';
+}
+
+function clearMediaFile() {
+    document.getElementById('mediaFile').value = '';
+    document.getElementById('mediaFileSelected').style.display = 'none';
+    document.getElementById('mediaUploadZone').style.display = 'block';
+}
+
+// Drag & drop support
+const zone = document.getElementById('mediaUploadZone');
+if (zone) {
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = 'var(--accent-primary)'; });
+    zone.addEventListener('dragleave', () => { zone.style.borderColor = 'var(--border-color)'; });
+    zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--border-color)';
+        if (e.dataTransfer.files.length) {
+            document.getElementById('mediaFile').files = e.dataTransfer.files;
+            onMediaFileSelected(document.getElementById('mediaFile'));
+        }
+    });
+}
+
+async function loadMedia() {
+    try {
+        const media = await api.get('/api/media');
+        const tbody = document.getElementById('mediaTable');
+        if (media.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><i class="fas fa-photo-video"></i><p>No media uploaded yet. Upload files to generate public URLs.</p></td></tr>';
+            return;
+        }
+        tbody.innerHTML = media.map(m => {
+            const isImage = m.contentType && m.contentType.startsWith('image/');
+            const preview = isImage ? `<img src="${m.url}" style="width:48px;height:48px;object-fit:cover;border-radius:6px">` :
+                m.contentType === 'application/pdf' ? '<i class="fas fa-file-pdf" style="font-size:32px;color:var(--accent-red)"></i>' :
+                '<i class="fas fa-file-video" style="font-size:32px;color:var(--accent-blue)"></i>';
+            const publicUrl = m.publicUrl || (window.location.origin + m.url);
+            return `
+            <tr>
+                <td>${preview}</td>
+                <td><strong>${m.filename}</strong><br><span class="text-sm text-muted">${m.description || ''}</span></td>
+                <td class="text-sm">${m.contentType}</td>
+                <td class="text-sm">${formatSize(m.size)}</td>
+                <td>
+                    <div class="url-cell">
+                        <input type="text" value="${publicUrl}" readonly id="url_${m._id}">
+                        <button class="btn btn-ghost btn-sm btn-icon" onclick="copyUrl('${m._id}')" title="Copy URL"><i class="fas fa-copy"></i></button>
+                    </div>
+                </td>
+                <td class="text-sm text-muted">${formatDate(m.uploadedAt)}</td>
+                <td>
+                    <div class="flex gap-2">
+                        <a href="${m.url}" target="_blank" class="btn btn-ghost btn-sm btn-icon" title="View"><i class="fas fa-eye"></i></a>
+                        <button class="btn btn-danger btn-sm btn-icon" onclick="deleteMedia('${m._id}')" title="Delete"><i class="fas fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+        // Load campaigns for dropdown
+        const campaigns = await api.get('/api/campaigns');
+        const sel = document.getElementById('mediaCampaign');
+        sel.innerHTML = '<option value="">No campaign</option>' + campaigns.map(c => `<option value="${c._id}">${c.name}</option>`).join('');
+    } catch (err) {
+        showToast('Failed to load media: ' + err.message, 'error');
+    }
+}
+
+function copyUrl(mediaId) {
+    const input = document.getElementById('url_' + mediaId);
+    if (input) {
+        input.select();
+        document.execCommand('copy');
+        showToast('URL copied to clipboard!', 'success');
+    }
+}
+
+function copyGeneratedUrl() {
+    const input = document.getElementById('generatedUrl');
+    input.select();
+    document.execCommand('copy');
+    showToast('URL copied to clipboard!', 'success');
+}
+
+async function uploadMedia() {
+    const fileInput = document.getElementById('mediaFile');
+    if (!fileInput.files.length) { showToast('Select a file first', 'warning'); return; }
+
+    const file = fileInput.files[0];
+    if (file.size > 50 * 1024 * 1024) { showToast('File too large. Max 50MB.', 'error'); return; }
+
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('campaignId', document.getElementById('mediaCampaign').value);
+    fd.append('description', document.getElementById('mediaDesc').value);
+
+    const btn = document.getElementById('uploadBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner" style="width:14px;height:14px"></div> Uploading...';
+
+    try {
+        const result = await api.upload('/api/media/upload', fd);
+        closeModal('uploadModal');
+
+        // Show the URL modal with the generated public URL
+        const publicUrl = result.publicUrl || (window.location.origin + result.url);
+        document.getElementById('generatedUrl').value = publicUrl;
+
+        // Preview
+        const previewEl = document.getElementById('urlModalPreview');
+        if (result.contentType && result.contentType.startsWith('image/')) {
+            previewEl.innerHTML = `<img src="${result.url}" style="max-width:200px;max-height:150px;border-radius:8px;border:1px solid var(--border-color)">`;
+        } else if (result.contentType === 'application/pdf') {
+            previewEl.innerHTML = '<i class="fas fa-file-pdf" style="font-size:48px;color:var(--accent-red)"></i>';
+        } else {
+            previewEl.innerHTML = '<i class="fas fa-file-video" style="font-size:48px;color:var(--accent-blue)"></i>';
+        }
+
+        openModal('urlModal');
+        showToast('Media uploaded! Public URL generated.', 'success');
+
+        // Reset form
+        clearMediaFile();
+        document.getElementById('mediaDesc').value = '';
+        loadMedia();
+    } catch (err) {
+        showToast('Upload failed: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Upload & Generate URL';
+    }
+}
+
+async function deleteMedia(id) {
+    if (!confirmAction('Delete this media file?')) return;
+    try { await api.del(`/api/media/${id}`); showToast('Deleted', 'success'); loadMedia(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+loadMedia();
+</script>
+{% endblock %}

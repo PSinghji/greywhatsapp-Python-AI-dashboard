@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - WA Campaign{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-ghost btn-sm" onclick="refreshDashboard()">
+    <i class="fas fa-sync-alt"></i> Refresh
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Grid -->
+<div class="stats-grid" id="statsGrid">
+    <div class="stat-card">
+        <div class="stat-label">Total Devices</div>
+        <div class="stat-value" id="statDevices">—</div>
+        <div class="stat-sub" id="statDevicesOnline">Loading...</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Active Campaigns</div>
+        <div class="stat-value green" id="statCampaigns">—</div>
+        <div class="stat-sub" id="statCampaignsTotal">Loading...</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Messages Sent</div>
+        <div class="stat-value blue" id="statSent">—</div>
+        <div class="stat-sub" id="statFailed">Loading...</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Pending Tasks</div>
+        <div class="stat-value yellow" id="statPending">—</div>
+        <div class="stat-sub" id="statInProgress">Loading...</div>
+    </div>
+</div>
+
+<!-- Connected Devices -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h2><i class="fas fa-mobile-alt" style="margin-right:8px;color:var(--accent-primary)"></i>Connected Devices</h2>
+        <a href="/devices" class="btn btn-ghost btn-sm">View All</a>
+    </div>
+    <div class="card-body">
+        <div class="device-grid" id="deviceGrid">
+            <div class="loading-overlay"><div class="spinner"></div></div>
+        </div>
+    </div>
+</div>
+
+<!-- Active Campaigns -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h2><i class="fas fa-bullhorn" style="margin-right:8px;color:var(--accent-purple)"></i>Active Campaigns</h2>
+        <a href="/campaigns" class="btn btn-ghost btn-sm">View All</a>
+    </div>
+    <div class="card-body">
+        <div id="campaignsList">
+            <div class="loading-overlay"><div class="spinner"></div></div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="card">
+    <div class="card-header">
+        <h2><i class="fas fa-history" style="margin-right:8px;color:var(--accent-cyan)"></i>Recent Tasks</h2>
+        <a href="/tasks" class="btn btn-ghost btn-sm">View All</a>
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Recipient</th>
+                        <th>Campaign</th>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="recentTasks">
+                    <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function accountTypeBadge(type) {
+    if (type === 'business') {
+        return `<span class="wa-type-badge business"><i class="fas fa-briefcase"></i> Business</span>`;
+    }
+    return `<span class="wa-type-badge personal"><i class="fas fa-user"></i> Personal</span>`;
+}
+
+async function refreshDashboard() {
+    try {
+        // Load device stats
+        const deviceStats = await api.get('/api/devices/stats');
+        document.getElementById('statDevices').textContent = deviceStats.total;
+        document.getElementById('statDevicesOnline').innerHTML = `<span class="status-dot online"></span> ${deviceStats.online} online`;
+
+        // Load campaign stats
+        const campStats = await api.get('/api/campaigns/stats');
+        document.getElementById('statCampaigns').textContent = campStats.active;
+        document.getElementById('statCampaignsTotal').textContent = `${campStats.total} total`;
+
+        // Load task stats
+        const taskStats = await api.get('/api/tasks/stats');
+        document.getElementById('statSent').textContent = taskStats.completed;
+        document.getElementById('statFailed').innerHTML = `<span style="color:var(--accent-red)">${taskStats.failed} failed</span>`;
+        document.getElementById('statPending').textContent = taskStats.pending;
+        document.getElementById('statInProgress').textContent = `${taskStats.inProgress} in progress`;
+
+        // Load devices
+        const devices = await api.get('/api/devices');
+        const grid = document.getElementById('deviceGrid');
+        if (devices.length === 0) {
+            grid.innerHTML = '<div class="empty-state"><i class="fas fa-mobile-alt"></i><p>No devices registered yet.</p><p class="text-sm text-muted">Install the Android APK and configure the server URL to get started.</p></div>';
+        } else {
+            grid.innerHTML = devices.slice(0, 8).map(d => `
+                <div class="device-card">
+                    <div class="device-card-header">
+                        <span class="device-card-name">${d.deviceName || d.deviceId}</span>
+                        <div>
+                            ${accountTypeBadge(d.whatsappAccountType)}
+                            ${statusBadge(d.status)}
+                        </div>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted)">${d.model || 'Unknown'} &middot; ${d.phoneNumber || 'No phone'}</div>
+                    <div class="device-card-stats">
+                        <div class="device-stat"><i class="fas fa-battery-half"></i>${batteryIcon(d.batteryLevel || 0)}</div>
+                        <div class="device-stat"><i class="fas fa-wifi"></i>${d.wifiConnected ? 'WiFi' : d.mobileData ? 'Mobile' : 'Offline'}</div>
+                        <div class="device-stat"><i class="fas fa-check-circle" style="color:var(--accent-green)"></i>${d.tasksSentCount || 0} sent</div>
+                        <div class="device-stat"><i class="fas fa-times-circle" style="color:var(--accent-red)"></i>${d.tasksFailedCount || 0} failed</div>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:8px"><i class="fas fa-clock"></i> ${timeAgo(d.lastHeartbeat)}</div>
+                </div>
+            `).join('');
+        }
+
+        // Load recent tasks
+        const taskData = await api.get('/api/tasks?limit=10');
+        const tbody = document.getElementById('recentTasks');
+        if (taskData.tasks.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No tasks yet.</td></tr>';
+        } else {
+            tbody.innerHTML = taskData.tasks.map(t => `
+                <tr>
+                    <td class="font-mono">${t.recipient}</td>
+                    <td>${t.campaignName || '—'}</td>
+                    <td>${t.deviceId ? t.deviceId.substring(0, 12) + '...' : '—'}</td>
+                    <td>${statusBadge(t.status)}</td>
+                    <td class="text-muted text-sm">${timeAgo(t.updatedAt)}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Load active campaigns
+        const campaigns = await api.get('/api/campaigns');
+        const campaignsList = document.getElementById('campaignsList');
+        const activeCampaigns = campaigns.filter(c => c.status === 'running' || c.status === 'paused').slice(0, 5);
+
+        if (activeCampaigns.length === 0) {
+            campaignsList.innerHTML = '<div class="empty-state"><i class="fas fa-bullhorn"></i><p>No active campaigns.</p></div>';
+        } else {
+            campaignsList.innerHTML = activeCampaigns.map(c => {
+                const stats = c.stats;
+                const total = stats.pending + stats.sent + stats.failed;
+                const progress = total > 0 ? Math.round((stats.sent / total) * 100) : 0;
+                return `
+                    <div class="campaign-item">
+                        <div class="campaign-info">
+                            <a href="/campaigns#${c._id}" class="campaign-name">${c.name}</a>
+                            ${statusBadge(c.status)}
+                        </div>
+                        <div class="campaign-progress">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width:${progress}%"></div>
+                            </div>
+                            <div class="progress-text">${progress}% (${stats.sent}/${total})</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    } catch (err) {
+        showToast('Failed to load dashboard: ' + err.message, 'error');
+    }
+}
+
+refreshDashboard();
+setInterval(refreshDashboard, 15000);
+</script>
+{% endblock %}

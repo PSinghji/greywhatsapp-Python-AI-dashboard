@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}Campaign Report - WA Campaign{% endblock %}
+{% block nav_campaign_reports %}active{% endblock %}
+{% block page_title %}Campaign Report{% endblock %}
+
+{% block top_actions %}
+<a href="/reports/campaigns" class="btn btn-ghost btn-sm"><i class="fas fa-arrow-left"></i> All Campaigns</a>
+<button class="btn btn-ghost btn-sm" onclick="exportReportCSV()"><i class="fas fa-file-csv"></i> Export CSV</button>
+<button class="btn btn-ghost btn-sm" onclick="loadReport()"><i class="fas fa-sync-alt"></i> Refresh</button>
+{% endblock %}
+
+{% block content %}
+<!-- Campaign Info Header -->
+<div class="card" style="margin-bottom: 1rem;">
+    <div class="card-header">
+        <h2 id="campaignName">Loading...</h2>
+        <span class="text-sm text-muted" id="campaignMeta"></span>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;margin-bottom:1rem;">
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Total</div>
+        <div id="statTotal" style="font-size:1.5rem;font-weight:700;color:var(--text-primary);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Sent</div>
+        <div id="statSent" style="font-size:1.5rem;font-weight:700;color:var(--accent-green);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Failed</div>
+        <div id="statFailed" style="font-size:1.5rem;font-weight:700;color:var(--accent-red);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Invalid Number</div>
+        <div id="statInvalid" style="font-size:1.5rem;font-weight:700;color:var(--accent-yellow, #f59e0b);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Restricted</div>
+        <div id="statRestricted" style="font-size:1.5rem;font-weight:700;color:var(--accent-orange, #f97316);">-</div>
+    </div>
+    <div class="card" style="padding:1rem;text-align:center;">
+        <div class="text-sm text-muted">Pending</div>
+        <div id="statPending" style="font-size:1.5rem;font-weight:700;color:var(--text-muted);">-</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1rem;">
+    <div class="card-body" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+        <select id="filterStatus" class="form-control" style="width:auto;min-width:150px;" onchange="applyFilters()">
+            <option value="">All Statuses</option>
+            <option value="completed">Sent</option>
+            <option value="failed">Failed</option>
+            <option value="invalid_number">Invalid Number</option>
+            <option value="account_restricted">Restricted</option>
+            <option value="pending">Pending</option>
+            <option value="assigned">Assigned</option>
+            <option value="in_progress">In Progress</option>
+        </select>
+        <select id="filterDevice" class="form-control" style="width:auto;min-width:180px;" onchange="applyFilters()">
+            <option value="">All Devices</option>
+        </select>
+        <input type="text" id="filterSearch" class="form-control" placeholder="Search phone number..." style="width:auto;min-width:200px;" oninput="applyFilters()">
+        <span class="text-sm text-muted" id="filterCount"></span>
+    </div>
+</div>
+
+<!-- Report Table -->
+<div class="card">
+    <div class="card-header">
+        <h3>Task Details</h3>
+        <span class="text-sm text-muted" id="reportCount">Loading...</span>
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Recipient</th>
+                        <th>Status</th>
+                        <th>Device Name</th>
+                        <th>Device Phone</th>
+                        <th>Error / Reason</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="reportTable">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="paginationControls"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const campaignId = "{{ campaign_id }}";
+    let allTasks = [];
+    let filteredTasks = [];
+    let currentPage = 1;
+    const rowsPerPage = 25;
+    let deviceMap = {};
+
+    async function loadReport() {
+        try {
+            const reportData = await api.get(`/api/campaigns/${campaignId}/report`);
+            
+            // Set campaign info
+            const campaign = reportData.campaign;
+            document.getElementById('campaignName').textContent = campaign.name || 'Campaign Report';
+            let metaParts = [];
+            if (campaign.status) metaParts.push(`Status: ${campaign.status}`);
+            if (campaign.accountType) metaParts.push(`Account: ${campaign.accountType}`);
+            document.getElementById('campaignMeta').textContent = metaParts.join(' | ');
+
+            // Set stats
+            const stats = reportData.stats;
+            document.getElementById('statTotal').textContent = stats.total || 0;
+            document.getElementById('statSent').textContent = stats.completed || 0;
+            document.getElementById('statFailed').textContent = stats.failed || 0;
+            document.getElementById('statInvalid').textContent = stats.invalid_number || 0;
+            document.getElementById('statRestricted').textContent = stats.account_restricted || 0;
+            document.getElementById('statPending').textContent = stats.pending || 0;
+
+            allTasks = reportData.tasks || [];
+            
+            // Build device filter dropdown
+            const deviceSelect = document.getElementById('filterDevice');
+            const devices = new Map();
+            allTasks.forEach(t => {
+                const dName = t.assignedDeviceName || t.assignedDeviceId || t.deviceId || 'Unknown';
+                const dId = t.assignedDeviceId || t.deviceId || '';
+                if (dId && !devices.has(dId)) {
+                    devices.set(dId, dName);
+                }
+            });
+            deviceSelect.innerHTML = '<option value="">All Devices</option>';
+            devices.forEach((name, id) => {
+                deviceSelect.innerHTML += `<option value="${id}">${name} (${id.substring(0, 8)}...)</option>`;
+            });
+
+            document.getElementById('reportCount').textContent = `${allTasks.length} recipients`;
+            applyFilters();
+        } catch (err) {
+            showToast('Failed to load report: ' + err.message, 'error');
+            document.getElementById('reportTable').innerHTML = `<tr><td colspan="7" class="empty-state error"><i class="fas fa-exclamation-triangle"></i><p>Could not load report.</p><p class="text-sm text-muted">${err.message}</p></td></tr>`;
+        }
+    }
+
+    function applyFilters() {
+        const statusFilter = document.getElementById('filterStatus').value;
+        const deviceFilter = document.getElementById('filterDevice').value;
+        const searchFilter = document.getElementById('filterSearch').value.toLowerCase().trim();
+
+        filteredTasks = allTasks.filter(t => {
+            if (statusFilter && t.status !== statusFilter) return false;
+            if (deviceFilter) {
+                const taskDeviceId = t.assignedDeviceId || t.deviceId || '';
+                if (taskDeviceId !== deviceFilter) return false;
+            }
+            if (searchFilter && !(t.recipient || '').toLowerCase().includes(searchFilter)) return false;
+            return true;
+        });
+
+        document.getElementById('filterCount').textContent = `Showing ${filteredTasks.length} of ${allTasks.length}`;
+        currentPage = 1;
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('reportTable');
+        const paginationControls = document.getElementById('paginationControls');
+        
+        if (filteredTasks.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><i class="fas fa-list"></i><p>No tasks found matching filters.</p></td></tr>';
+            paginationControls.innerHTML = '';
+            return;
+        }
+
+        const start = (currentPage - 1) * rowsPerPage;
+        const end = start + rowsPerPage;
+        const paginatedData = filteredTasks.slice(start, end);
+
+        tbody.innerHTML = paginatedData.map((task, idx) => {
+            const rowNum = start + idx + 1;
+            const deviceName = task.assignedDeviceName || task.deviceId || 'N/A';
+            const devicePhone = task.assignedDevicePhone || '-';
+            const errorReason = task.failureReason || task.errorMessage || '';
+            const timeStr = task.deliveredAt ? formatDate(task.deliveredAt) : (task.updatedAt ? formatDate(task.updatedAt) : '-');
+            
+            // Color the error reason based on status
+            let errorStyle = '';
+            if (task.status === 'failed') errorStyle = 'color:var(--accent-red)';
+            else if (task.status === 'invalid_number') errorStyle = 'color:var(--accent-yellow, #f59e0b)';
+            else if (task.status === 'account_restricted') errorStyle = 'color:var(--accent-orange, #f97316)';
+
+            return `
+                <tr>
+                    <td>${rowNum}</td>
+                    <td><strong>${task.recipient || 'N/A'}</strong></td>
+                    <td>${statusBadge(task.status)}</td>
+                    <td>${deviceName}</td>
+                    <td>${devicePhone}</td>
+                    <td class="text-sm" style="max-width:300px;${errorStyle}" title="${errorReason}">${errorReason ? (errorReason.length > 60 ? errorReason.substring(0, 60) + '...' : errorReason) : ''}</td>
+                    <td class="text-sm">${timeStr}</td>
+                </tr>
+            `;
+        }).join('');
+
+        renderPagination(paginationControls, filteredTasks.length);
+    }
+
+    function renderPagination(container, totalItems) {
+        const totalPages = Math.ceil(totalItems / rowsPerPage);
+        if (totalPages <= 1) {
+            container.innerHTML = '';
+            return;
+        }
+
+        let html = '<div class="pagination" style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-top:1rem;">';
+        html += `<button class="btn btn-ghost btn-sm" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">Previous</button>`;
+        html += `<span class="page-info">Page ${currentPage} of ${totalPages}</span>`;
+        html += `<button class="btn btn-ghost btn-sm" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Next</button>`;
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function changePage(page) {
+        currentPage = page;
+        renderTable();
+    }
+
+    function exportReportCSV() {
+        const dataToExport = filteredTasks.length > 0 ? filteredTasks : allTasks;
+        if (dataToExport.length === 0) {
+            showToast('No data to export', 'info');
+            return;
+        }
+        const headers = ['#', 'Recipient', 'Status', 'Device ID', 'Device Name', 'Device Phone', 'Error/Reason', 'Delivered At', 'Last Updated'];
+        const rows = dataToExport.map((task, idx) => {
+            return [
+                idx + 1,
+                task.recipient || '',
+                task.status || '',
+                task.assignedDeviceId || task.deviceId || '',
+                task.assignedDeviceName || '',
+                task.assignedDevicePhone || '',
+                `"${(task.failureReason || task.errorMessage || '').replace(/"/g, '""')}"`,
+                task.deliveredAt || '',
+                task.updatedAt || ''
+            ].join(',');
+        });
+
+        const campaignName = document.getElementById('campaignName').textContent || 'campaign-report';
+        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `${campaignName.replace(/\s+/g, '_').toLowerCase()}_report.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // Load the report on page load
+    loadReport();
+</script>
+{% endblock %}

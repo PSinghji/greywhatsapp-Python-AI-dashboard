@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Devices - WA Campaign{% endblock %}
+{% block nav_devices %}active{% endblock %}
+{% block page_title %}Devices{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-accent btn-sm" onclick="wakeAllDevices()" id="wakeAllBtn"><i class="fas fa-bolt"></i> Wake All Devices</button>
+<button class="btn btn-ghost btn-sm" onclick="loadDevices()"><i class="fas fa-sync-alt"></i> Refresh</button>
+<button class="btn btn-ghost btn-sm" onclick="exportDevicesCSV()"><i class="fas fa-file-csv"></i> Export CSV</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Cards -->
+<div class="grid grid-4" id="deviceSummary" style="margin-bottom: 1.5rem;">
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div class="text-sm text-muted">Total Devices</div>
+        <div class="text-2xl font-bold" id="statTotal">—</div>
+    </div>
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div class="text-sm text-muted">Online</div>
+        <div class="text-2xl font-bold" style="color: var(--accent-green)" id="statOnline">—</div>
+    </div>
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div class="text-sm text-muted">Offline</div>
+        <div class="text-2xl font-bold" style="color: var(--accent-yellow)" id="statOffline">—</div>
+    </div>
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div class="text-sm text-muted">Restricted</div>
+        <div class="text-2xl font-bold" style="color: var(--accent-red)" id="statRestricted">—</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2>Registered Devices</h2>
+        <span class="text-sm text-muted" id="deviceCount">Loading...</span>
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Device</th>
+                        <th>Phone</th>
+                        <th>Model</th>
+                        <th>Account Type</th>
+                        <th>Status</th>
+                        <th>Battery</th>
+                        <th>Connectivity</th>
+                        <th>Sent / Failed</th>
+                        <th>Last Seen</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="devicesTable">
+                    <tr><td colspan="10" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="paginationControls"></div>
+    </div>
+</div>
+
+<!-- Edit Device Modal -->
+<div class="modal-overlay" id="editDeviceModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Edit Device</h3>
+            <button class="modal-close" onclick="closeModal('editDeviceModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editDeviceId">
+            <div class="form-group">
+                <label>Device Name</label>
+                <input type="text" class="form-control" id="editDeviceName" placeholder="My Phone 1">
+            </div>
+            <div class="form-group">
+                <label>Phone Number</label>
+                <input type="text" class="form-control" id="editDevicePhone" placeholder="+91XXXXXXXXXX">
+            </div>
+            <div class="form-group">
+                <label>WhatsApp Account Type</label>
+                <select class="form-control" id="editWhatsappAccountType">
+                    <option value="personal">Personal</option>
+                    <option value="business">Business</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('editDeviceModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveDevice()">Save Changes</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allDevices = [];
+let currentPage = 1;
+const rowsPerPage = 10;
+
+function accountTypeBadge(type) {
+    if (type === 'business') {
+        return `<span class="wa-type-badge business"><i class="fas fa-briefcase"></i> Business</span>`;
+    }
+    return `<span class="wa-type-badge personal"><i class="fas fa-user"></i> Personal</span>`;
+}
+
+function renderDevicesTable() {
+    const tbody = document.getElementById('devicesTable');
+    const paginationControls = document.getElementById('paginationControls');
+    
+    if (allDevices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><i class="fas fa-mobile-alt"></i><p>No devices registered yet.</p></td></tr>';
+        paginationControls.innerHTML = '';
+        return;
+    }
+
+    const start = (currentPage - 1) * rowsPerPage;
+    const end = start + rowsPerPage;
+    const paginatedDevices = allDevices.slice(start, end);
+
+    tbody.innerHTML = paginatedDevices.map(d => `
+        <tr>
+            <td><strong>${d.deviceName || d.deviceId.substring(0,12)}</strong><br><span class="text-sm text-muted font-mono">${d.deviceId.substring(0,16)}...</span></td>
+            <td>${d.phoneNumber || '—'}</td>
+            <td><span class="text-sm">${d.model || '—'}</span><br><span class="text-sm text-muted">Android ${d.androidVersion || '?'}</span></td>
+            <td>${accountTypeBadge(d.whatsappAccountType)}</td>
+            <td>${statusBadge(d.status)}</td>
+            <td>${batteryIcon(d.batteryLevel || 0)}</td>
+            <td>${d.wifiConnected ? '<i class="fas fa-wifi" style="color:var(--accent-green)"></i> WiFi' : d.mobileData ? '<i class="fas fa-signal" style="color:var(--accent-yellow)"></i> Mobile' : '<i class="fas fa-times" style="color:var(--accent-red)"></i> None'}</td>
+            <td><span style="color:var(--accent-green)">${d.tasksSentCount || 0}</span> / <span style="color:var(--accent-red)">${d.tasksFailedCount || 0}</span></td>
+            <td class="text-sm text-muted">${timeAgo(d.lastHeartbeat)}</td>
+            <td>
+                <div class="flex gap-2">
+                    <button class="btn btn-ghost btn-sm btn-icon" onclick="editDevice('${d.deviceId}','${(d.deviceName||'').replace(/'/g,"\\'")}','${d.phoneNumber||''}','${d.whatsappAccountType||'personal'}')" title="Edit"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-ghost btn-sm btn-icon" onclick="sendCommand('${d.deviceId}','pause')" title="Pause"><i class="fas fa-pause"></i></button>
+                    <button class="btn btn-ghost btn-sm btn-icon" onclick="sendCommand('${d.deviceId}','resume')" title="Resume"><i class="fas fa-play"></i></button>
+                    ${d.status === 'offline' ? `<button class="btn btn-accent btn-sm btn-icon" onclick="wakeDevice('${d.deviceId}')" title="Wake Up"><i class="fas fa-bolt"></i></button>` : ''}
+                    <button class="btn btn-danger btn-sm btn-icon" onclick="removeDevice('${d.deviceId}')" title="Remove"><i class="fas fa-trash"></i></button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    renderPagination(paginationControls, allDevices.length);
+}
+
+function renderPagination(container, totalItems) {
+    const totalPages = Math.ceil(totalItems / rowsPerPage);
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="pagination">';
+    html += `<button class="btn btn-ghost btn-sm" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">Previous</button>`;
+    
+    html += `<span class="page-info">Page ${currentPage} of ${totalPages}</span>`;
+
+    html += `<button class="btn btn-ghost btn-sm" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Next</button>`;
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function changePage(page) {
+    currentPage = page;
+    renderDevicesTable();
+}
+
+async function loadDevices() {
+    try {
+        allDevices = await api.get('/api/devices');
+        document.getElementById('deviceCount').textContent = `${allDevices.length} devices`;
+        currentPage = 1;
+        renderDevicesTable();
+        updateDeviceSummary();
+    } catch (err) {
+        showToast('Failed to load devices: ' + err.message, 'error');
+    }
+}
+
+function updateDeviceSummary() {
+    const total = allDevices.length;
+    const online = allDevices.filter(d => d.status === 'online').length;
+    const offline = allDevices.filter(d => d.status === 'offline').length;
+    const restricted = allDevices.filter(d => d.status === 'restricted' || d.status === 'blocked').length;
+    
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statOnline').textContent = online;
+    document.getElementById('statOffline').textContent = offline;
+    document.getElementById('statRestricted').textContent = restricted;
+}
+
+async function wakeAllDevices() {
+    const btn = document.getElementById('wakeAllBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Waking...';
+    btn.disabled = true;
+
+    try {
+        const result = await api.post('/api/devices/wake-all', {});
+        showToast(result.message, 'success');
+        loadDevices();
+    } catch (err) {
+        showToast('Failed to wake devices: ' + err.message, 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+async function wakeDevice(deviceId) {
+    try {
+        await api.post(`/api/devices/${deviceId}/command`, { command: 'wake_up' });
+        showToast('Wake-up command sent', 'success');
+        loadDevices();
+    } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+    }
+}
+
+function editDevice(id, name, phone, accountType) {
+    document.getElementById('editDeviceId').value = id;
+    document.getElementById('editDeviceName').value = name;
+    document.getElementById('editDevicePhone').value = phone;
+    document.getElementById('editWhatsappAccountType').value = accountType;
+    openModal('editDeviceModal');
+}
+
+async function saveDevice() {
+    const id = document.getElementById('editDeviceId').value;
+    try {
+        await api.put(`/api/devices/${id}`, {
+            deviceName: document.getElementById('editDeviceName').value,
+            phoneNumber: document.getElementById('editDevicePhone').value,
+            whatsappAccountType: document.getElementById('editWhatsappAccountType').value,
+        });
+        closeModal('editDeviceModal');
+        showToast('Device updated', 'success');
+        loadDevices();
+    } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+    }
+}
+
+async function sendCommand(id, cmd) {
+    try {
+        await api.post(`/api/devices/${id}/command`, { command: cmd });
+        showToast(`Command '${cmd}' sent`, 'success');
+        loadDevices();
+    } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+    }
+}
+
+async function removeDevice(id) {
+    if (!confirmAction('Remove this device? Pending tasks will be cancelled.')) return;
+    try {
+        await api.del(`/api/devices/${id}`);
+        showToast('Device removed', 'success');
+        loadDevices();
+    } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+    }
+}
+
+function exportDevicesCSV() {
+    if (allDevices.length === 0) {
+        showToast('No devices to export', 'info');
+        return;
+    }
+    const headers = ['Device ID', 'Device Name', 'Phone Number', 'Model', 'Android Version', 'Account Type', 'Status', 'Battery', 'Last Seen'];
+    const rows = allDevices.map(d => [
+        d.deviceId,
+        d.deviceName || '',
+        d.phoneNumber || '',
+        d.model || '',
+        d.androidVersion || '',
+        d.whatsappAccountType || 'personal',
+        d.status,
+        d.batteryLevel || 0,
+        d.lastHeartbeat
+    ].join(','));
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "devices.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+loadDevices();
+setInterval(loadDevices, 15000);
+</script>
+{% endblock %}

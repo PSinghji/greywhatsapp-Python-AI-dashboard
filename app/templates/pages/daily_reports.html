@@ -1,0 +1,436 @@
+{% extends "base.html" %}
+{% block title %}Daily Reports - WA Campaign{% endblock %}
+{% block page_title %}Daily Reports{% endblock %}
+{% block nav_daily_reports %}active{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+    .report-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .report-card { background: var(--card-bg); border-radius: 12px; padding: 1.25rem; border: 1px solid var(--border-color); }
+    .report-card .label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
+    .report-card .value { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); }
+    .report-card .sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .report-card.green .value { color: #22c55e; }
+    .report-card.red .value { color: #ef4444; }
+    .report-card.yellow .value { color: #eab308; }
+    .report-card.blue .value { color: #3b82f6; }
+    .report-card.purple .value { color: #a855f7; }
+    .report-card.orange .value { color: #f97316; }
+
+    .section-title { font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 0.75rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem; }
+    .section-title i { color: var(--accent-color); }
+
+    .chart-container { background: var(--card-bg); border-radius: 12px; padding: 1.25rem; border: 1px solid var(--border-color); margin-bottom: 1.5rem; }
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+    @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+    .chart-wrapper { height: 300px; position: relative; }
+
+    .filter-bar { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; }
+    .filter-bar select, .filter-bar input { padding: 0.5rem 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--text-primary); font-size: 0.875rem; }
+
+    .daily-table { width: 100%; border-collapse: collapse; }
+    .daily-table th, .daily-table td { padding: 0.65rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color); font-size: 0.85rem; }
+    .daily-table th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; background: var(--table-header-bg); }
+    .daily-table tr:hover { background: var(--row-hover); }
+    .daily-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 6px; font-size: 0.7rem; font-weight: 600; }
+    .badge-green { background: rgba(34,197,94,0.15); color: #22c55e; }
+    .badge-red { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .badge-yellow { background: rgba(234,179,8,0.15); color: #eab308; }
+    .badge-blue { background: rgba(59,130,246,0.15); color: #3b82f6; }
+
+    .tab-bar { display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 2px solid var(--border-color); }
+    .tab-btn { padding: 0.5rem 1rem; border: none; background: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; }
+    .tab-btn.active { color: var(--accent-color); border-bottom-color: var(--accent-color); }
+    .tab-btn:hover { color: var(--text-primary); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .progress-bar { width: 100%; height: 6px; background: var(--border-color); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+    .progress-fill.green { background: #22c55e; }
+    .progress-fill.red { background: #ef4444; }
+</style>
+{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-outline" onclick="exportDailyCSV()"><i class="fas fa-download"></i> Export CSV</button>
+<button class="btn btn-outline" onclick="loadAllData()"><i class="fas fa-sync-alt"></i> Refresh</button>
+{% endblock %}
+
+{% block content %}
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <label>Period:</label>
+    <select id="dayRange" onchange="loadAllData()">
+        <option value="7">Last 7 Days</option>
+        <option value="14">Last 14 Days</option>
+        <option value="30" selected>Last 30 Days</option>
+        <option value="60">Last 60 Days</option>
+        <option value="90">Last 90 Days</option>
+    </select>
+    <label>Date:</label>
+    <input type="date" id="specificDate" onchange="loadHourlyTrend()">
+</div>
+
+<!-- Overview Cards -->
+<div id="overviewCards" class="report-cards">
+    <div class="report-card blue"><div class="label">Total Messages</div><div class="value" id="cardTotal">-</div><div class="sub" id="cardTotalToday">Today: -</div></div>
+    <div class="report-card green"><div class="label">Delivered</div><div class="value" id="cardDelivered">-</div><div class="sub" id="cardDeliveredToday">Today: -</div></div>
+    <div class="report-card red"><div class="label">Failed</div><div class="value" id="cardFailed">-</div><div class="sub" id="cardFailedToday">Today: -</div></div>
+    <div class="report-card yellow"><div class="label">Non-WhatsApp</div><div class="value" id="cardInvalid">-</div><div class="sub" id="cardInvalidToday">Today: -</div></div>
+    <div class="report-card orange"><div class="label">Restricted</div><div class="value" id="cardRestricted">-</div><div class="sub" id="cardRestrictedToday">Today: -</div></div>
+    <div class="report-card purple"><div class="label">Delivery Rate</div><div class="value" id="cardRate">-</div><div class="sub" id="cardRateToday">Today: -</div></div>
+</div>
+
+<!-- Campaign & Device Quick Stats -->
+<div class="report-cards" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+    <div class="report-card"><div class="label">Total Campaigns</div><div class="value" id="cardCampaigns">-</div><div class="sub" id="cardActiveCampaigns">Active: -</div></div>
+    <div class="report-card"><div class="label">Total Devices</div><div class="value" id="cardDevices">-</div><div class="sub" id="cardOnlineDevices">Online: -</div></div>
+    <div class="report-card"><div class="label">Pending</div><div class="value" id="cardPending">-</div><div class="sub">In queue</div></div>
+    <div class="report-card"><div class="label">Blocked Devices</div><div class="value" id="cardBlocked">-</div><div class="sub">Restricted/Blocked</div></div>
+</div>
+
+<!-- Charts Row -->
+<div class="section-title"><i class="fas fa-chart-line"></i> Daily Trends</div>
+<div class="chart-row">
+    <div class="chart-container">
+        <h4 style="margin:0 0 0.75rem; font-size:0.9rem; color:var(--text-muted);">Messages Per Day</h4>
+        <div class="chart-wrapper"><canvas id="dailyChart"></canvas></div>
+    </div>
+    <div class="chart-container">
+        <h4 style="margin:0 0 0.75rem; font-size:0.9rem; color:var(--text-muted);">Delivery Rate Per Day</h4>
+        <div class="chart-wrapper"><canvas id="rateChart"></canvas></div>
+    </div>
+</div>
+
+<div class="chart-row">
+    <div class="chart-container">
+        <h4 style="margin:0 0 0.75rem; font-size:0.9rem; color:var(--text-muted);">Status Breakdown (All Time)</h4>
+        <div class="chart-wrapper"><canvas id="pieChart"></canvas></div>
+    </div>
+    <div class="chart-container">
+        <h4 style="margin:0 0 0.75rem; font-size:0.9rem; color:var(--text-muted);">Hourly Trend (<span id="hourlyDateLabel">Today</span>)</h4>
+        <div class="chart-wrapper"><canvas id="hourlyChart"></canvas></div>
+    </div>
+</div>
+
+<!-- Tabs: Daily Breakdown / Device Performance / Campaign Stats -->
+<div class="section-title"><i class="fas fa-table"></i> Detailed Reports</div>
+<div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('daily')">Daily Breakdown</button>
+    <button class="tab-btn" onclick="switchTab('device')">Device Performance</button>
+    <button class="tab-btn" onclick="switchTab('campaign')">Campaign Stats</button>
+    <button class="tab-btn" onclick="switchTab('health')">Device Health</button>
+</div>
+
+<!-- Daily Breakdown Table -->
+<div id="tab-daily" class="tab-content active">
+    <div class="chart-container" style="overflow-x:auto;">
+        <table class="daily-table" id="dailyTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th class="num">Total</th>
+                    <th class="num">Delivered</th>
+                    <th class="num">Failed</th>
+                    <th class="num">Non-WA</th>
+                    <th class="num">Restricted</th>
+                    <th class="num">Blocked</th>
+                    <th class="num">Pending</th>
+                    <th class="num">Campaigns</th>
+                    <th class="num">Devices</th>
+                    <th class="num">Rate</th>
+                </tr>
+            </thead>
+            <tbody id="dailyTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Device Performance Table -->
+<div id="tab-device" class="tab-content">
+    <div class="chart-container" style="overflow-x:auto;">
+        <table class="daily-table" id="deviceTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Device</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th class="num">Total</th>
+                    <th class="num">Delivered</th>
+                    <th class="num">Failed</th>
+                    <th class="num">Non-WA</th>
+                    <th class="num">Rate</th>
+                </tr>
+            </thead>
+            <tbody id="deviceTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Campaign Stats Table -->
+<div id="tab-campaign" class="tab-content">
+    <div class="chart-container" style="overflow-x:auto;">
+        <table class="daily-table" id="campaignTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Campaign</th>
+                    <th class="num">Total</th>
+                    <th class="num">Delivered</th>
+                    <th class="num">Failed</th>
+                    <th class="num">Non-WA</th>
+                    <th class="num">Pending</th>
+                    <th class="num">Progress</th>
+                </tr>
+            </thead>
+            <tbody id="campaignTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Device Health Table -->
+<div id="tab-health" class="tab-content">
+    <div class="chart-container" style="overflow-x:auto;">
+        <table class="daily-table" id="healthTable">
+            <thead>
+                <tr>
+                    <th>Device</th>
+                    <th>Phone</th>
+                    <th>Model</th>
+                    <th>Status</th>
+                    <th>Battery</th>
+                    <th>Last Seen</th>
+                    <th class="num">Total Tasks</th>
+                    <th class="num">Delivered</th>
+                    <th class="num">Failed</th>
+                    <th class="num">Non-WA</th>
+                    <th class="num">Rate</th>
+                </tr>
+            </thead>
+            <tbody id="healthTableBody"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let dailyChart, rateChart, pieChart, hourlyChart;
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    event.target.classList.add('active');
+}
+
+function statusBadge(status) {
+    const map = { online: 'green', active: 'green', offline: 'red', restricted: 'yellow', blocked: 'red', paused: 'blue' };
+    return `<span class="badge badge-${map[status] || 'blue'}">${status}</span>`;
+}
+
+function formatNum(n) { return (n || 0).toLocaleString(); }
+
+async function loadAllData() {
+    await Promise.all([loadOverview(), loadDailySummary(), loadDevicePerformance(), loadCampaignDaily(), loadDeviceHealth(), loadHourlyTrend()]);
+}
+
+async function loadOverview() {
+    try {
+        const data = await api.get('/api/daily-reports/overview-totals');
+        const a = data.allTime, t = data.today;
+        document.getElementById('cardTotal').textContent = formatNum(a.total);
+        document.getElementById('cardTotalToday').textContent = `Today: ${formatNum(t.total)}`;
+        document.getElementById('cardDelivered').textContent = formatNum(a.completed);
+        document.getElementById('cardDeliveredToday').textContent = `Today: ${formatNum(t.completed)}`;
+        document.getElementById('cardFailed').textContent = formatNum(a.failed);
+        document.getElementById('cardFailedToday').textContent = `Today: ${formatNum(t.failed)}`;
+        document.getElementById('cardInvalid').textContent = formatNum(a.invalidNumber);
+        document.getElementById('cardInvalidToday').textContent = `Today: ${formatNum(t.invalidNumber)}`;
+        document.getElementById('cardRestricted').textContent = formatNum(a.restricted);
+        document.getElementById('cardRestrictedToday').textContent = `Today: ${formatNum(t.restricted)}`;
+        document.getElementById('cardRate').textContent = a.deliveryRate + '%';
+        document.getElementById('cardRateToday').textContent = `Today: ${t.deliveryRate}%`;
+        document.getElementById('cardCampaigns').textContent = formatNum(data.campaigns.total);
+        document.getElementById('cardActiveCampaigns').textContent = `Active: ${data.campaigns.active}`;
+        document.getElementById('cardDevices').textContent = formatNum(data.devices.total);
+        document.getElementById('cardOnlineDevices').textContent = `Online: ${data.devices.online}`;
+        document.getElementById('cardPending').textContent = formatNum(a.pending);
+        document.getElementById('cardBlocked').textContent = formatNum(data.devices.restricted);
+
+        // Pie chart
+        if (pieChart) pieChart.destroy();
+        pieChart = new Chart(document.getElementById('pieChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Delivered', 'Failed', 'Non-WhatsApp', 'Restricted', 'Blocked', 'Pending'],
+                datasets: [{ data: [a.completed, a.failed, a.invalidNumber, a.restricted, a.blocked, a.pending],
+                    backgroundColor: ['#22c55e', '#ef4444', '#eab308', '#f97316', '#dc2626', '#3b82f6'] }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } } }
+        });
+    } catch (e) { console.error('Overview error:', e); }
+}
+
+async function loadDailySummary() {
+    try {
+        const days = document.getElementById('dayRange').value;
+        const data = await api.get(`/api/daily-reports/summary?days=${days}`);
+        const rows = data.days || [];
+
+        // Daily chart
+        const labels = rows.map(r => r.date).reverse();
+        const completed = rows.map(r => r.completed).reverse();
+        const failed = rows.map(r => r.failed).reverse();
+        const invalid = rows.map(r => r.invalidNumber).reverse();
+
+        if (dailyChart) dailyChart.destroy();
+        dailyChart = new Chart(document.getElementById('dailyChart'), {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Delivered', data: completed, backgroundColor: '#22c55e', borderRadius: 4 },
+                    { label: 'Failed', data: failed, backgroundColor: '#ef4444', borderRadius: 4 },
+                    { label: 'Non-WA', data: invalid, backgroundColor: '#eab308', borderRadius: 4 },
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true, ticks: { color: '#94a3b8', maxRotation: 45 } }, y: { stacked: true, ticks: { color: '#94a3b8' } } }, plugins: { legend: { labels: { color: '#94a3b8' } } } }
+        });
+
+        // Rate chart
+        const rates = rows.map(r => r.deliveryRate).reverse();
+        if (rateChart) rateChart.destroy();
+        rateChart = new Chart(document.getElementById('rateChart'), {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'Delivery Rate %', data: rates, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 3 }] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { min: 0, max: 100, ticks: { color: '#94a3b8' } }, x: { ticks: { color: '#94a3b8', maxRotation: 45 } } }, plugins: { legend: { labels: { color: '#94a3b8' } } } }
+        });
+
+        // Table
+        const tbody = document.getElementById('dailyTableBody');
+        tbody.innerHTML = rows.map(r => `<tr>
+            <td><strong>${r.date}</strong></td>
+            <td class="num">${formatNum(r.totalTasks)}</td>
+            <td class="num" style="color:#22c55e">${formatNum(r.completed)}</td>
+            <td class="num" style="color:#ef4444">${formatNum(r.failed)}</td>
+            <td class="num" style="color:#eab308">${formatNum(r.invalidNumber)}</td>
+            <td class="num" style="color:#f97316">${formatNum(r.accountRestricted)}</td>
+            <td class="num" style="color:#dc2626">${formatNum(r.accountBlocked)}</td>
+            <td class="num" style="color:#3b82f6">${formatNum(r.pending)}</td>
+            <td class="num">${r.campaignCount}</td>
+            <td class="num">${r.deviceCount}</td>
+            <td class="num"><span class="badge ${r.deliveryRate >= 80 ? 'badge-green' : r.deliveryRate >= 50 ? 'badge-yellow' : 'badge-red'}">${r.deliveryRate}%</span></td>
+        </tr>`).join('');
+    } catch (e) { console.error('Daily summary error:', e); }
+}
+
+async function loadDevicePerformance() {
+    try {
+        const days = document.getElementById('dayRange').value;
+        const data = await api.get(`/api/daily-reports/device-performance?days=${days}`);
+        const tbody = document.getElementById('deviceTableBody');
+        tbody.innerHTML = (data.records || []).map(r => `<tr>
+            <td>${r.date}</td>
+            <td><strong>${r.deviceName || r.deviceId}</strong></td>
+            <td>${r.phoneNumber || '-'}</td>
+            <td>${statusBadge(r.status)}</td>
+            <td class="num">${formatNum(r.total)}</td>
+            <td class="num" style="color:#22c55e">${formatNum(r.completed)}</td>
+            <td class="num" style="color:#ef4444">${formatNum(r.failed)}</td>
+            <td class="num" style="color:#eab308">${formatNum(r.invalidNumber)}</td>
+            <td class="num"><span class="badge ${r.successRate >= 80 ? 'badge-green' : r.successRate >= 50 ? 'badge-yellow' : 'badge-red'}">${r.successRate}%</span></td>
+        </tr>`).join('');
+    } catch (e) { console.error('Device perf error:', e); }
+}
+
+async function loadCampaignDaily() {
+    try {
+        const days = document.getElementById('dayRange').value;
+        const data = await api.get(`/api/daily-reports/campaign-daily?days=${days}`);
+        const tbody = document.getElementById('campaignTableBody');
+        tbody.innerHTML = (data.records || []).map(r => {
+            const pct = r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0;
+            return `<tr>
+                <td>${r.date}</td>
+                <td><strong>${r.campaignName || r.campaignId}</strong></td>
+                <td class="num">${formatNum(r.total)}</td>
+                <td class="num" style="color:#22c55e">${formatNum(r.completed)}</td>
+                <td class="num" style="color:#ef4444">${formatNum(r.failed)}</td>
+                <td class="num" style="color:#eab308">${formatNum(r.invalidNumber)}</td>
+                <td class="num" style="color:#3b82f6">${formatNum(r.pending)}</td>
+                <td class="num"><div class="progress-bar"><div class="progress-fill ${pct >= 80 ? 'green' : 'red'}" style="width:${pct}%"></div></div><span style="font-size:0.75rem">${pct}%</span></td>
+            </tr>`;
+        }).join('');
+    } catch (e) { console.error('Campaign daily error:', e); }
+}
+
+async function loadDeviceHealth() {
+    try {
+        const data = await api.get('/api/daily-reports/device-health');
+        const tbody = document.getElementById('healthTableBody');
+        tbody.innerHTML = (data.devices || []).map(d => `<tr>
+            <td><strong>${d.deviceName || d.deviceId}</strong><br><small style="color:var(--text-muted)">${d.deviceId.substring(0,12)}...</small></td>
+            <td>${d.phoneNumber || '-'}</td>
+            <td>${d.model || '-'}</td>
+            <td>${statusBadge(d.status)}</td>
+            <td>${d.batteryLevel}% ${d.isCharging ? '⚡' : ''}</td>
+            <td>${d.lastHeartbeat ? new Date(d.lastHeartbeat).toLocaleString() : '-'}</td>
+            <td class="num">${formatNum(d.totalTasks)}</td>
+            <td class="num" style="color:#22c55e">${formatNum(d.completed)}</td>
+            <td class="num" style="color:#ef4444">${formatNum(d.failed)}</td>
+            <td class="num" style="color:#eab308">${formatNum(d.invalidNumber)}</td>
+            <td class="num"><span class="badge ${d.successRate >= 80 ? 'badge-green' : d.successRate >= 50 ? 'badge-yellow' : 'badge-red'}">${d.successRate}%</span></td>
+        </tr>`).join('');
+    } catch (e) { console.error('Device health error:', e); }
+}
+
+async function loadHourlyTrend() {
+    try {
+        const dateInput = document.getElementById('specificDate');
+        const dateParam = dateInput.value ? `?date=${dateInput.value}` : '';
+        const data = await api.get(`/api/daily-reports/hourly-trend${dateParam}`);
+        document.getElementById('hourlyDateLabel').textContent = data.date || 'Today';
+
+        const allHours = Array.from({length: 24}, (_, i) => String(i).padStart(2, '0'));
+        const hourMap = {};
+        (data.hours || []).forEach(h => { hourMap[h.hour] = h; });
+
+        if (hourlyChart) hourlyChart.destroy();
+        hourlyChart = new Chart(document.getElementById('hourlyChart'), {
+            type: 'bar',
+            data: {
+                labels: allHours.map(h => h + ':00'),
+                datasets: [
+                    { label: 'Delivered', data: allHours.map(h => (hourMap[h] || {}).completed || 0), backgroundColor: '#22c55e', borderRadius: 3 },
+                    { label: 'Failed', data: allHours.map(h => (hourMap[h] || {}).failed || 0), backgroundColor: '#ef4444', borderRadius: 3 },
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true, ticks: { color: '#94a3b8' } }, y: { stacked: true, ticks: { color: '#94a3b8' } } }, plugins: { legend: { labels: { color: '#94a3b8' } } } }
+        });
+    } catch (e) { console.error('Hourly trend error:', e); }
+}
+
+function exportDailyCSV() {
+    const table = document.getElementById('dailyTable');
+    const rows = Array.from(table.querySelectorAll('tr'));
+    const csv = rows.map(r => Array.from(r.querySelectorAll('th,td')).map(c => '"' + c.textContent.trim() + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `daily_report_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+}
+
+// Set default date to today
+document.getElementById('specificDate').value = new Date().toISOString().slice(0, 10);
+
+// Load all data on page load
+loadAllData();
+</script>
+{% endblock %}

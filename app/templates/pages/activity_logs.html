@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Activity Logs - WA Campaign{% endblock %}
+{% block nav_logs %}active{% endblock %}
+{% block page_title %}Activity Logs{% endblock %}
+
+{% block content %}
+<div class="content-section">
+    <!-- Filters -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+            <select id="filterLevel" class="form-input" style="width: 150px;" onchange="loadLogs()">
+                <option value="">All Levels</option>
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="error">Error</option>
+            </select>
+            <select id="filterEventType" class="form-input" style="width: 200px;" onchange="loadLogs()">
+                <option value="">All Events</option>
+                <option value="device_registered">Device Registered</option>
+                <option value="device_reconnected">Device Reconnected</option>
+                <option value="device_back_online">Device Back Online</option>
+                <option value="device_offline_auto">Device Offline (Auto)</option>
+                <option value="tasks_assigned">Tasks Assigned</option>
+                <option value="task_completed">Task Completed</option>
+                <option value="task_failed">Task Failed</option>
+                <option value="task_retry">Task Retry</option>
+                <option value="campaign_created">Campaign Created</option>
+                <option value="campaign_started">Campaign Started</option>
+                <option value="campaign_paused">Campaign Paused</option>
+                <option value="campaign_stopped">Campaign Stopped</option>
+                <option value="campaign_completed">Campaign Completed</option>
+                <option value="media_uploaded">Media Uploaded</option>
+                <option value="command_sent">Command Sent</option>
+            </select>
+            <input type="text" id="filterDeviceId" class="form-input" placeholder="Device ID..." style="width: 200px;">
+            <button class="btn btn-primary" onclick="loadLogs()">
+                <i class="fas fa-search"></i> Filter
+            </button>
+            <button class="btn btn-secondary" onclick="clearFilters()">
+                <i class="fas fa-times"></i> Clear
+            </button>
+            <span id="logCount" style="margin-left: auto; color: var(--text-secondary); font-size: 13px;"></span>
+        </div>
+    </div>
+
+    <!-- Logs Table -->
+    <div class="card">
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 160px;">Time</th>
+                        <th style="width: 80px;">Level</th>
+                        <th style="width: 160px;">Event</th>
+                        <th>Message</th>
+                        <th style="width: 140px;">Device</th>
+                        <th style="width: 120px;">Campaign</th>
+                    </tr>
+                </thead>
+                <tbody id="logsTable">
+                    <tr><td colspan="6" style="text-align:center; padding: 40px; color: var(--text-secondary);">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadLogs() {
+    const level = document.getElementById('filterLevel').value;
+    const eventType = document.getElementById('filterEventType').value;
+    const deviceId = document.getElementById('filterDeviceId').value.trim();
+
+    let url = '/api/agent/logs?limit=200';
+    if (level) url += `&level=${level}`;
+    if (eventType) url += `&eventType=${eventType}`;
+    if (deviceId) url += `&deviceId=${deviceId}`;
+
+    // Note: This endpoint requires API key. For dashboard, we'll use a direct DB query endpoint.
+    // For now, use the internal logs endpoint
+    try {
+        const data = await api.get(url.replace('/api/agent/logs', '/api/logs'));
+        renderLogs(data.logs || data);
+    } catch (e) {
+        // Fallback: try the agent endpoint (won't work without key from browser)
+        try {
+            const data = await api.get(url);
+            renderLogs(data.logs || data);
+        } catch (e2) {
+            document.getElementById('logsTable').innerHTML =
+                `<tr><td colspan="6" style="text-align:center; padding: 40px; color: var(--text-secondary);">
+                    <i class="fas fa-info-circle"></i> No logs yet or unable to load logs.
+                </td></tr>`;
+        }
+    }
+}
+
+function renderLogs(logs) {
+    const tbody = document.getElementById('logsTable');
+    document.getElementById('logCount').textContent = `${logs.length} log entries`;
+
+    if (!logs || logs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 40px; color: var(--text-secondary);">
+            <i class="fas fa-clipboard-list"></i> No activity logs found
+        </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = logs.map(log => {
+        const levelClass = log.level === 'error' ? 'badge-failed' :
+                          log.level === 'warning' ? 'badge-paused' : 'badge-online';
+        const levelIcon = log.level === 'error' ? 'exclamation-circle' :
+                         log.level === 'warning' ? 'exclamation-triangle' : 'info-circle';
+        return `
+            <tr>
+                <td style="font-size: 12px; white-space: nowrap;">${formatDate(log.createdAt)}</td>
+                <td><span class="badge ${levelClass}"><i class="fas fa-${levelIcon}"></i> ${log.level}</span></td>
+                <td style="font-size: 12px; font-family: monospace;">${log.eventType || '—'}</td>
+                <td style="font-size: 13px;">${log.message || '—'}</td>
+                <td style="font-size: 12px; font-family: monospace;">${log.deviceId ? log.deviceId.substring(0, 12) + '...' : '—'}</td>
+                <td style="font-size: 12px;">${log.campaignId ? log.campaignId.substring(0, 8) + '...' : '—'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function clearFilters() {
+    document.getElementById('filterLevel').value = '';
+    document.getElementById('filterEventType').value = '';
+    document.getElementById('filterDeviceId').value = '';
+    loadLogs();
+}
+
+// Auto-refresh every 10 seconds
+setInterval(loadLogs, 10000);
+loadLogs();
+</script>
+{% endblock %}

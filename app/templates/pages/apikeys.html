@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}API Keys - WA Campaign{% endblock %}
+{% block nav_apikeys %}active{% endblock %}
+{% block page_title %}API Keys{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-primary btn-sm" onclick="openModal('newKeyModal')"><i class="fas fa-plus"></i> Generate Key</button>
+{% endblock %}
+
+{% block content %}
+<p class="text-sm text-muted mb-4">API keys authenticate Android agents connecting to this dashboard. Each agent needs a valid key in its configuration.</p>
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Name</th><th>Key</th><th>Status</th><th>Usage</th><th>Last Used</th><th>Created</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="keysTable">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- New Key Modal -->
+<div class="modal-overlay" id="newKeyModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Generate API Key</h3>
+            <button class="modal-close" onclick="closeModal('newKeyModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Key Name *</label>
+                <input type="text" class="form-control" id="keyName" placeholder="Production Agents">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" class="form-control" id="keyDesc" placeholder="For office Android devices">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('newKeyModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="generateKey()">Generate</button>
+        </div>
+    </div>
+</div>
+
+<!-- Show Key Modal -->
+<div class="modal-overlay" id="showKeyModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>API Key Generated</h3>
+            <button class="modal-close" onclick="closeModal('showKeyModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="text-sm text-muted mb-4"><strong>Copy this key now.</strong> It will only be shown in full once.</p>
+            <div style="background:var(--bg-input);padding:16px;border-radius:var(--radius-sm);border:1px solid var(--border-color);word-break:break-all;font-family:monospace;font-size:13px" id="generatedKey"></div>
+            <button class="btn btn-ghost btn-sm mt-2" onclick="copyKey()"><i class="fas fa-copy"></i> Copy to Clipboard</button>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" onclick="closeModal('showKeyModal')">Done</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadKeys() {
+    try {
+        const keys = await api.get('/api/apikeys');
+        const tbody = document.getElementById('keysTable');
+        if (keys.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><i class="fas fa-key"></i><p>No API keys yet. Generate one for your agents.</p></td></tr>';
+            return;
+        }
+        tbody.innerHTML = keys.map(k => `
+            <tr>
+                <td><strong>${k.name}</strong><br><span class="text-sm text-muted">${k.description || ''}</span></td>
+                <td class="font-mono">${k.maskedKey}</td>
+                <td>${k.isActive ? '<span class="badge badge-online">Active</span>' : '<span class="badge badge-offline">Disabled</span>'}</td>
+                <td>${k.usageCount || 0} calls</td>
+                <td class="text-sm text-muted">${k.lastUsedAt ? timeAgo(k.lastUsedAt) : 'Never'}</td>
+                <td class="text-sm text-muted">${formatDate(k.createdAt)}</td>
+                <td>
+                    <div class="flex gap-2">
+                        <button class="btn btn-ghost btn-sm" onclick="toggleKey('${k._id}')">${k.isActive ? '<i class="fas fa-ban"></i> Disable' : '<i class="fas fa-check"></i> Enable'}</button>
+                        <button class="btn btn-danger btn-sm btn-icon" onclick="deleteKey('${k._id}')"><i class="fas fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        showToast('Failed to load keys: ' + err.message, 'error');
+    }
+}
+
+async function generateKey() {
+    const name = document.getElementById('keyName').value.trim();
+    if (!name) { showToast('Key name is required', 'warning'); return; }
+    try {
+        const result = await api.post('/api/apikeys', {
+            name,
+            description: document.getElementById('keyDesc').value.trim(),
+        });
+        closeModal('newKeyModal');
+        document.getElementById('generatedKey').textContent = result.key;
+        openModal('showKeyModal');
+        document.getElementById('keyName').value = '';
+        document.getElementById('keyDesc').value = '';
+        loadKeys();
+    } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+    }
+}
+
+function copyKey() {
+    const key = document.getElementById('generatedKey').textContent;
+    navigator.clipboard.writeText(key).then(() => showToast('Copied!', 'success'));
+}
+
+async function toggleKey(id) {
+    try { await api.post(`/api/apikeys/${id}/toggle`); showToast('Key status updated', 'success'); loadKeys(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+async function deleteKey(id) {
+    if (!confirmAction('Delete this API key? Agents using it will be disconnected.')) return;
+    try { await api.del(`/api/apikeys/${id}`); showToast('Key deleted', 'success'); loadKeys(); }
+    catch (err) { showToast('Failed: ' + err.message, 'error'); }
+}
+
+loadKeys();
+</script>
+{% endblock %}

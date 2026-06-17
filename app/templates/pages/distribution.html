@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Campaign Distribution - WA Campaign{% endblock %}
+{% block nav_distribution %}active{% endblock %}
+{% block page_title %}Campaign Distribution{% endblock %}
+
+{% block top_actions %}
+<button class="btn btn-ghost btn-sm" onclick="loadDistribution()"><i class="fas fa-sync-alt"></i> Refresh</button>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2>Live Task Distribution</h2>
+        <span class="text-sm text-muted">Shows tasks assigned to online devices</span>
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table id="distributionTable">
+                <thead>
+                    <tr>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Assigned Campaign</th>
+                        <th>Recipient</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="4" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadDistribution() {
+    try {
+        const [devices, tasksResponse] = await Promise.all([
+            api.get('/api/devices'),
+            api.get('/api/tasks?limit=1000&status=assigned') // Get assigned tasks
+        ]);
+        
+        const tasks = tasksResponse.tasks;
+        const tableBody = document.querySelector('#distributionTable tbody');
+
+        if (tasks.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="4" class="empty-state"><i class="fas fa-check-circle"></i><p>No tasks currently assigned to devices.</p></td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = tasks.map(task => {
+            const device = devices.find(d => d.deviceId === task.deviceId);
+            return `
+                <tr>
+                    <td>${device ? device.deviceName : task.deviceId.substring(0,12)}</td>
+                    <td>${device ? statusBadge(device.status) : statusBadge('offline')}</td>
+                    <td>${task.campaignName}</td>
+                    <td class="font-mono">${task.recipient}</td>
+                </tr>
+            `;
+        }).join('');
+
+    } catch (err) {
+        showToast('Failed to load distribution: ' + err.message, 'error');
+    }
+}
+
+loadDistribution();
+setInterval(loadDistribution, 15000); // Refresh every 15 seconds
+</script>
+{% endblock %}

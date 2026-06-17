@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Analytics - WA Campaign{% endblock %}
+{% block nav_analytics %}active{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+
+{% block content %}
+<!-- Overview Stats -->
+<div class="stats-grid" id="analyticsStats">
+    <div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value green" id="anSuccessRate">—</div></div>
+    <div class="stat-card"><div class="stat-label">Total Sent</div><div class="stat-value blue" id="anSent">—</div></div>
+    <div class="stat-card"><div class="stat-label">Total Failed</div><div class="stat-value red" id="anFailed">—</div></div>
+    <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value yellow" id="anPending">—</div></div>
+</div>
+
+<!-- Campaign Performance -->
+<div class="card mb-4">
+    <div class="card-header"><h2><i class="fas fa-chart-bar" style="margin-right:8px;color:var(--accent-primary)"></i>Campaign Performance</h2></div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Campaign</th><th>Total</th><th>Completed</th><th>Failed</th><th>Pending</th><th>Success Rate</th><th>Progress</th></tr>
+                </thead>
+                <tbody id="campPerfTable">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Device Performance -->
+<div class="card">
+    <div class="card-header"><h2><i class="fas fa-mobile-alt" style="margin-right:8px;color:var(--accent-green)"></i>Device Performance</h2></div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Device</th><th>Status</th><th>Total</th><th>Completed</th><th>Failed</th><th>Success Rate</th><th>Performance</th></tr>
+                </thead>
+                <tbody id="devPerfTable">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadAnalytics() {
+    try {
+        const overview = await api.get('/api/analytics/overview');
+        document.getElementById('anSuccessRate').textContent = overview.successRate + '%';
+        document.getElementById('anSent').textContent = overview.sent;
+        document.getElementById('anFailed').textContent = overview.failed;
+        document.getElementById('anPending').textContent = overview.pending;
+
+        const campaigns = await api.get('/api/analytics/campaigns');
+        const campBody = document.getElementById('campPerfTable');
+        if (campaigns.length === 0) {
+            campBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No campaign data yet.</td></tr>';
+        } else {
+            campBody.innerHTML = campaigns.map(c => `
+                <tr>
+                    <td><strong>${c.campaignName || c.campaignId}</strong></td>
+                    <td>${c.total}</td>
+                    <td style="color:var(--accent-green)">${c.completed}</td>
+                    <td style="color:var(--accent-red)">${c.failed}</td>
+                    <td style="color:var(--accent-yellow)">${c.pending}</td>
+                    <td><strong>${c.successRate}%</strong></td>
+                    <td style="width:150px"><div class="progress-bar"><div class="progress-fill" style="width:${c.successRate}%;background:${c.successRate>70?'var(--accent-green)':c.successRate>40?'var(--accent-yellow)':'var(--accent-red)'}"></div></div></td>
+                </tr>
+            `).join('');
+        }
+
+        const devices = await api.get('/api/analytics/devices');
+        const devBody = document.getElementById('devPerfTable');
+        if (devices.length === 0) {
+            devBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No device data yet.</td></tr>';
+        } else {
+            devBody.innerHTML = devices.map(d => `
+                <tr>
+                    <td><strong>${d.deviceName}</strong></td>
+                    <td>${statusBadge(d.status)}</td>
+                    <td>${d.total}</td>
+                    <td style="color:var(--accent-green)">${d.completed}</td>
+                    <td style="color:var(--accent-red)">${d.failed}</td>
+                    <td><strong>${d.successRate}%</strong></td>
+                    <td style="width:150px"><div class="progress-bar"><div class="progress-fill" style="width:${d.successRate}%;background:${d.successRate>70?'var(--accent-green)':d.successRate>40?'var(--accent-yellow)':'var(--accent-red)'}"></div></div></td>
+                </tr>
+            `).join('');
+        }
+    } catch (err) {
+        showToast('Failed to load analytics: ' + err.message, 'error');
+    }
+}
+
+loadAnalytics();
+setInterval(loadAnalytics, 30000);
+</script>
+{% endblock %}

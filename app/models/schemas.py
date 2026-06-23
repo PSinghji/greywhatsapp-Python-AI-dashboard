@@ -186,7 +186,7 @@ class CampaignCreate(BaseModel):
     assignedDevices: List[str] = []
     scheduledAt: Optional[str] = None
     accountType: Optional[str] = None  # "personal" or "business" for dual WhatsApp routing
-
+    aiVariationsEnabled: bool = False
 
 class CampaignUpdate(BaseModel):
     name: Optional[str] = None
@@ -197,7 +197,7 @@ class CampaignUpdate(BaseModel):
     tuningProfileId: Optional[str] = None
     assignedDevices: Optional[List[str]] = None
     accountType: Optional[str] = None
-
+    aiVariationsEnabled: Optional[bool] = None
 
 # ─── Task Models ─────────────────────────────────────────
 class TaskComplete(BaseModel):
@@ -259,6 +259,8 @@ class TuningProfileUpdate(BaseModel):
 class ApiKeyCreate(BaseModel):
     name: str
     description: Optional[str] = ""
+    # Add the scopes field to support our new authentication service!
+    scopes: Optional[List[str]] = ["agent"]
 
 
 # ─── Agent Task Fetch ────────────────────────────────────

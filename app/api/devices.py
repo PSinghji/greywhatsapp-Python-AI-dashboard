@@ -2,14 +2,13 @@
 Devices API - Manage connected Android agents.
 """
 from fastapi import APIRouter, HTTPException
-from bson import ObjectId
 from datetime import datetime, timezone
 
-from app.database import get_db
-from app.models.schemas import DeviceRegister, DeviceUpdate
+from app.models.schemas import DeviceUpdate
+from app.services.device_service import DeviceService
 
 router = APIRouter()
-
+device_service = DeviceService()
 
 def serialize_device(doc):
     """Convert MongoDB document to JSON-serializable dict."""
@@ -22,36 +21,22 @@ def serialize_device(doc):
 @router.get("")
 async def list_devices():
     """List all registered devices."""
-    db = get_db()
-    devices = await db.devices.find().sort("lastHeartbeat", -1).to_list(500)
+    devices = await device_service.get_all_devices()
     return [serialize_device(d) for d in devices]
 
 
 @router.get("/stats")
 async def device_stats():
     """Get device statistics."""
-    db = get_db()
-    total = await db.devices.count_documents({})
-    online = await db.devices.count_documents({"status": "online"})
-    offline = await db.devices.count_documents({"status": "offline"})
-    error = await db.devices.count_documents({"status": "error"})
-    paused = await db.devices.count_documents({"status": "paused"})
-    restricted = await db.devices.count_documents({"status": "restricted"})
-    return {
-        "total": total,
-        "online": online,
-        "offline": offline,
-        "error": error,
-        "paused": paused,
-        "restricted": restricted,
-    }
+    # Logic moved to service: This now executes 1 fast aggregation query 
+    # instead of 6 slow count_documents queries.
+    return await device_service.get_device_stats()
 
 
 @router.get("/{device_id}")
 async def get_device(device_id: str):
     """Get a single device by its deviceId."""
-    db = get_db()
-    device = await db.devices.find_one({"deviceId": device_id})
+    device = await device_service.get_device_by_id(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     return serialize_device(device)
@@ -60,14 +45,11 @@ async def get_device(device_id: str):
 @router.put("/{device_id}")
 async def update_device(device_id: str, data: DeviceUpdate):
     """Update device name, phone, or status."""
-    db = get_db()
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    update_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
-    result = await db.devices.update_one(
-        {"deviceId": device_id}, {"$set": update_data}
-    )
+    
+    result = await device_service.update_device(device_id, update_data)
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Device not found")
     return {"success": True, "message": "Device updated"}
@@ -76,32 +58,25 @@ async def update_device(device_id: str, data: DeviceUpdate):
 @router.delete("/{device_id}")
 async def delete_device(device_id: str):
     """Remove a device from the system."""
-    db = get_db()
-    result = await db.devices.delete_one({"deviceId": device_id})
+    result = await device_service.delete_device(device_id)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Device not found")
-    # Also remove pending tasks for this device
-    await db.tasks.delete_many({"deviceId": device_id, "status": {"$in": ["pending", "assigned"]}})
     return {"success": True, "message": "Device removed"}
 
 
 @router.post("/{device_id}/command")
 async def send_command(device_id: str, command: dict):
     """Send a command to a device (pause, resume, stop, wake_up)."""
-    db = get_db()
     valid_commands = ["pause", "resume", "stop", "restart", "wake_up"]
     cmd = command.get("command")
     if cmd not in valid_commands:
         raise HTTPException(status_code=400, detail=f"Invalid command. Use: {valid_commands}")
 
-    device = await db.devices.find_one({"deviceId": device_id})
+    device = await device_service.get_device_by_id(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    await db.devices.update_one(
-        {"deviceId": device_id},
-        {"$set": {"pendingCommand": cmd, "commandAt": datetime.now(timezone.utc).isoformat()}}
-    )
+    await device_service.queue_command(device_id, cmd)
     return {"success": True, "message": f"Command '{cmd}' queued for device"}
 
 
@@ -113,13 +88,7 @@ async def wake_all_devices():
     (running every 15 min even when app is killed) sends its next
     heartbeat, it will receive the wake_up command and restart AgentService.
     """
-    db = get_db()
-    now = datetime.now(timezone.utc).isoformat()
-
-    # Find all devices that are not restricted/blocked
-    target_devices = await db.devices.find(
-        {"status": {"$nin": ["restricted", "blocked"]}}
-    ).to_list(500)
+    target_devices = await device_service.get_target_devices()
 
     if not target_devices:
         return {"success": True, "woken": 0, "message": "No eligible devices found"}
@@ -136,14 +105,8 @@ async def wake_all_devices():
             already_online += 1
             continue
 
-        # Set wake_up command for offline/paused/error devices
-        await db.devices.update_one(
-            {"deviceId": device_id},
-            {"$set": {
-                "pendingCommand": "wake_up",
-                "commandAt": now
-            }}
-        )
+        # Set wake_up command for offline/paused/error devices using the service
+        await device_service.queue_command(device_id, "wake_up")
         woken_count += 1
         woken_devices.append(device.get("deviceName", device_id[:12]))
 

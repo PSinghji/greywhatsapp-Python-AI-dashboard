@@ -4,7 +4,7 @@ Analytics API - Campaign and device performance metrics.
 from fastapi import APIRouter, Query
 from bson import ObjectId
 from app.database import get_db
-
+from app.services.device_service import DeviceService
 router = APIRouter()
 
 

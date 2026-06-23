@@ -60,12 +60,9 @@ RUN find /build/source -name "*.cpython-*.so" -exec sh -c '\
         cp "$f" "/build/final/$dir/"; \
     done' sh {} +
 
-# Copy obfuscated main.py
-RUN cp /build/obfuscated/main.py /build/final/main.py 2>/dev/null || \
+# Copy ALL PyArmor obfuscated files (includes main.py, pyarmor_runtime, AND the app/ directory with services)
+RUN cp -r /build/obfuscated/* /build/final/ 2>/dev/null || \
     cp /build/source/main.py /build/final/main.py
-
-# Copy PyArmor runtime (required for obfuscated files to work)
-RUN cp -r /build/obfuscated/pyarmor_runtime_* /build/final/ 2>/dev/null || true
 
 # Write minimal __init__.py files (needed for Python package imports)
 RUN for d in app app/api app/models app/services; do \
@@ -100,13 +97,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy ONLY the protected build (no source code ever touches this stage)
 COPY --from=builder /build/final/ .
-
 # Create uploads directory
 RUN mkdir -p uploads
 
 # The /app directory now contains:
 #   - .so compiled binaries (unreadable machine code)
-#   - Obfuscated main.py (PyArmor protected)
+#   - Obfuscated Python files including app/services (PyArmor protected)
 #   - Minimal __init__.py files
 #   - HTML templates & static assets
 #   - NO original Python source code

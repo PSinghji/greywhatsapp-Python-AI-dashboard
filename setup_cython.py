@@ -39,6 +39,7 @@ setup(
             "language_level": "3",      # Python 3
             "boundscheck": False,       # Disable bounds checking for speed
             "wraparound": False,        # Disable negative indexing for speed
+            "annotation_typing": False, # <--- THE MAGIC FIX: Ignores FastAPI type hints
         },
         build_dir="build_cython",
     ),
